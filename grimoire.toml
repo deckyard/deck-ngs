@@ -1,0 +1,35 @@
+# Grimoire book configuration for the @jennifer/ngs deck documentation.
+
+[book]
+title = "@jennifer/ngs"
+description = "Streaming NGS file formats, read QC, interval arithmetic and pipeline orchestration for Jennifer."
+language = "en"
+src = "docs"
+
+[build]
+out = "site"
+clean = true
+jobs = 0
+
+[html]
+theme = "grimoire"
+mode = "auto"
+navPosition = "left"
+tocPosition = "right"
+tocDepth = 3
+sectionNumbers = true
+repoUrl = "https://github.com/jennifer-language/deck-ngs"
+repoLabel = "Source"
+editUrl = "https://github.com/jennifer-language/deck-ngs/edit/main/docs/{path}"
+
+[highlight]
+enabled = true
+
+[search]
+enabled = true
+
+[pdf]
+# The book is published as a site only. Off is Grimoire's default, so this
+# states it rather than changes it: `grimoire build` in CI must not spend time
+# on a PDF, and must not drop one into the Pages artifact.
+enabled = false

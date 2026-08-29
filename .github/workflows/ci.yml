@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only by default; the two jobs that need more ask for it themselves.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Superseding a pull-request run is fine; cancelling a release is not.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The deck's source files declare a `>=0.25.0` interpreter floor, which the
+  # interpreter enforces when it reads them. 0.25.0 is not released yet, so CI
+  # runs on the `dev` interpreter image - a dev build bypasses the floor, which
+  # is the same arrangement Grimoire uses for the same reason.
+  #
+  # Once 0.25.0 ships, change this to `ghcr.io/jennifer-language/jennifer:0.25`
+  # and nothing else needs to move.
+  JENNIFER_IMAGE: "ghcr.io/jennifer-language/jennifer:dev"
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Pull the interpreter image
+        run: docker pull "${JENNIFER_IMAGE}"
+
+      - name: Report the interpreter version
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "${PWD}:/work" --workdir /work \
+            "${JENNIFER_IMAGE}" version
+
+      - name: Check formatting
+        # `fmt -l` lists unformatted files and exits 1 when there are any.
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "${PWD}:/work" --workdir /work \
+            "${JENNIFER_IMAGE}" fmt -l src/*.j examples/*.j
+
+      - name: Lint
+        # `lint` exits 1 on a warning, 0 when clean.
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "${PWD}:/work" --workdir /work \
+            "${JENNIFER_IMAGE}" lint src/*.j examples/*.j
+
+      - name: Check the cheatsheet covers every export
+        # Plain shell over the checkout; no interpreter involved.
+        run: tools/check-cheatsheet.sh
+
+      - name: Check every source file carries its SPDX header and floor
+        # lint's L303 rejects a malformed pragma but not a missing one, so a
+        # module can land bare and still lint clean. This also re-reads the
+        # licence and engine floor from deck.yaml, so the manifest and the
+        # headers cannot drift apart.
+        run: tools/check-headers.sh
+
+      - name: Check every module has a co-located test overlay
+        # jvc's publish gate requires a MODULE_test.j beside every module in
+        # src/, so a module that grows a test-free surface fails here rather
+        # than at `jvc publish`.
+        run: |
+          set -euo pipefail
+          missing=0
+          for module in src/*.j; do
+            case "${module}" in *_test.j) continue ;; esac
+            overlay="${module%.j}_test.j"
+            if [[ ! -f "${overlay}" ]]; then
+              echo "${module} has no ${overlay}" >&2
+              missing=1
+            fi
+          done
+          for overlay in src/*_test.j; do
+            module="${overlay%_test.j}.j"
+            if [[ ! -f "${module}" ]]; then
+              echo "${overlay} overlays no module ${module}" >&2
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Run the test suite
+        # One container for the whole suite, so a failing file does not stop the
+        # rest from reporting. The deck shells out to gzip, mkfifo and sh, all of
+        # which the image carries.
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "${PWD}:/work" --workdir /work \
+            --entrypoint sh "${JENNIFER_IMAGE}" -c '
+              failed=0
+              for suite in src/*_test.j; do
+                echo "--- $suite"
+                jennifer test "$suite" || failed=1
+              done
+              exit "$failed"
+            '
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Build the book with Grimoire
+        # The image carries Grimoire and a suitable interpreter, so nothing but
+        # Docker is needed. `--user` makes the generated site owned by the runner
+        # rather than by the image's user. Grimoire exits 1 if the outline names
+        # a chapter with no file behind it.
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "${PWD}:/work" \
+            ghcr.io/jennifer-language/grimoire:latest \
+            build --verbose
+
+      - name: Verify the site was produced
+        run: |
+          set -euo pipefail
+          for page in index cheatsheet getting-started performance; do
+            test -s "site/${page}.html" || { echo "missing site/${page}.html" >&2; exit 1; }
+          done
+          test -d site/assets
+
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  publish-docs:
+    name: Publish to GitHub Pages
+    # Publish from the default branch and from tags; a pull request builds the
+    # docs above but never publishes them.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    needs: [test, docs]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [test, docs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Check the tag matches deck.yaml
+        run: |
+          set -euo pipefail
+          declared="$(grep -m1 -E '^[[:space:]]+version:' deck.yaml | cut -d: -f2 | tr -d " \"'")"
+          # The registry allows either `0.1.0` or `v0.1.0` as the tag.
+          tag="${GITHUB_REF_NAME#v}"
+          if [[ "${declared}" != "${tag}" ]]; then
+            echo "tag ${GITHUB_REF_NAME} does not match deck.yaml version ${declared}" >&2
+            exit 1
+          fi
+          echo "version=${declared}" >> "${GITHUB_ENV}"
+
+      - name: Build the release archive
+        run: |
+          set -euo pipefail
+          # The shape the deck spec describes: <scope>-<deck>-<version>.tar.gz,
+          # one wrapping directory, and a src/ subtree inside it. jvc vendors
+          # only src/ and ignores everything beside it, so the manifest, licence
+          # and README ride along for humans without affecting the install.
+          root="jennifer-ngs-${version}"
+          mkdir -p "stage/${root}"
+          cp -r src "stage/${root}/src"
+          cp deck.yaml LICENSE README.md "stage/${root}/"
+          tar -czf "${root}.tar.gz" -C stage "${root}"
+          # Two forms of the same digest: `sha256sum -c` for humans, and the
+          # `sha256:<hex>` the registry records as the integrity pin.
+          sha256sum "${root}.tar.gz" > "${root}.tar.gz.sha256"
+          echo "sha256:$(sha256sum "${root}.tar.gz" | cut -d' ' -f1)" \
+            > "${root}.tar.gz.checksum"
+          echo "archive=${root}.tar.gz" >> "${GITHUB_ENV}"
+          tar -tzf "${root}.tar.gz" | head -n 20
+
+      - name: Write the release notes
+        run: |
+          set -euo pipefail
+          cat > notes.md <<'NOTES'
+          Streaming NGS file formats, read QC, interval arithmetic and pipeline
+          orchestration for Jennifer. Implements milestone M27.6.
+
+          **Install** — `jvc add @jennifer/ngs`, or vendor the `src/` subtree
+          by hand:
+
+          ```sh
+          mkdir -p vendor/jennifer/ngs
+          tar -xzf jennifer-ngs-__VERSION__.tar.gz -C vendor/jennifer/ngs \
+              --strip-components=2 jennifer-ngs-__VERSION__/src
+          ```
+
+          ```jennifer
+          import "@jennifer/ngs/fastq.j" as fastq;
+          ```
+
+          Needs the default `jennifer` binary for streaming gzip and pipeline
+          orchestration; everything else runs on `jennifer-tiny` too.
+
+          [Documentation](https://jennifer-language.github.io/deck-ngs/)
+          NOTES
+          sed -i "s/__VERSION__/${version}/g" notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            "${archive}" \
+            "${archive}.sha256" \
+            "${archive}.checksum" \
+            --title "@jennifer/ngs ${version}" \
+            --notes-file notes.md

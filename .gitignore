@@ -1,0 +1,7 @@
+# Grimoire build output
+site/
+
+# Release staging
+stage/
+ngs-*.tar.gz
+ngs-*.tar.gz.sha256
