@@ -67,6 +67,15 @@ func testAllOkDetectsRealFailure() {
     testing.assertEqual(allOk([$res]), false);
 }
 
+# Stage a file's modification time exactly, so a staleness test does not depend
+# on how fine the filesystem's timestamps are or on how fast the machine is.
+# Wall-clock ordering is precisely what these tests must not rely on: a whole
+# job can land inside one timestamp tick.
+func stamp(path as string, at as string) {
+    def res as os.Result init os.run(["touch", "-d", $at, $path]);
+    testing.assertEqual($res.exitCode, 0);
+}
+
 func testUpToDateJobIsSkippedThenRerun() {
     def input as string init fs.makeTempFile("", "ngsin", ".txt");
     fs.writeString($input, "in\n");
@@ -74,19 +83,49 @@ func testUpToDateJobIsSkippedThenRerun() {
     def cmd as string init "cat " + core.shellQuote($input) + " > " + core.shellQuote($output);
     def j as Job init producing(needing(shell("copy", $cmd), [$input]), [$output]);
 
+    # Output strictly newer than input: current, so nothing runs.
+    stamp($input, "2020-01-01 00:00:00");
+    stamp($output, "2020-01-01 00:00:01");
     def first as Result init run($j);
     testing.assertEqual($first.skipped, true);
 
+    # Input touched after the output: stale, so it runs and rewrites the output.
     fs.writeString($input, "changed\n");
+    stamp($output, "2020-01-01 00:00:01");
+    stamp($input, "2020-01-01 00:00:02");
     def second as Result init run($j);
     testing.assertEqual($second.skipped, false);
     testing.assertEqual($second.exitCode, 0);
     testing.assertEqual(fs.readString($output), "changed\n");
 
+    # The run just rewrote the output, so it is current again.
+    stamp($input, "2020-01-01 00:00:00");
+    stamp($output, "2020-01-01 00:00:01");
     def third as Result init run($j);
     fs.remove($input);
     fs.remove($output);
     testing.assertEqual($third.skipped, true);
+}
+
+func testEqualTimestampsCountAsStale() {
+    # The tie-break that matters. An input stamped the same as the output cannot
+    # be shown to predate it, so the job is stale rather than current - which is
+    # the common case, not a rare race, whenever a pipeline finishes inside one
+    # timestamp tick.
+    def input as string init fs.makeTempFile("", "ngsin", ".txt");
+    fs.writeString($input, "in\n");
+    def output as string init fs.makeTempFile("", "ngsout", ".txt");
+    def cmd as string init "cat " + core.shellQuote($input) + " > " + core.shellQuote($output);
+    def j as Job init producing(needing(shell("copy", $cmd), [$input]), [$output]);
+
+    stamp($input, "2020-01-01 00:00:00");
+    stamp($output, "2020-01-01 00:00:00");
+    testing.assertEqual(needsRun($j), true);
+
+    def res as Result init run($j);
+    fs.remove($input);
+    fs.remove($output);
+    testing.assertEqual($res.skipped, false);
 }
 
 func testMissingOutputForcesRun() {

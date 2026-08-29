@@ -57,9 +57,16 @@ argv is the safe default.
 
 ## Skipping work that is already done
 
-A job that declares outputs is **skipped when every output exists and is newer
-than every input**. Re-running a pipeline therefore resumes rather than redoes,
-which is the property that makes a long pipeline survivable.
+A job that declares outputs is **skipped when every output exists and is
+strictly newer than every input**. Re-running a pipeline therefore resumes
+rather than redoes, which is the property that makes a long pipeline survivable.
+
+*Strictly* newer is the load-bearing word. An input stamped the same as an
+output is treated as stale, not current: equal timestamps cannot show which was
+written first, and on a filesystem whose timestamp resolution is coarser than
+the time a job takes, a whole pipeline can land in one tick. Re-running a job
+that was current wastes time; skipping one that was stale quietly ships a wrong
+result, so the tie breaks towards running.
 
 ```jennifer
 pipeline.needsRun($j);      # the decision, on its own

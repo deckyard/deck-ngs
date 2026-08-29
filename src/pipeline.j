@@ -204,7 +204,14 @@ export func needsRun(j as Job) {
         }
     }
     for (def want in $j.inputs) {
-        if (fs.stat($want).mtimeNanos > $oldest) {
+        # `>=`, not `>`. An input stamped the same as the oldest output cannot
+        # be shown to predate it, so the output cannot be shown to have been
+        # built from it - and on a filesystem whose timestamps are coarser than
+        # the time a job takes, that is the common case rather than a rare tie.
+        # Re-running a job that was in fact current costs time; skipping one
+        # that was stale ships a wrong result quietly, so the tie breaks
+        # towards running.
+        if (fs.stat($want).mtimeNanos >= $oldest) {
             return true;
         }
     }

@@ -13,13 +13,22 @@
 # examples/pipeline.j drives external aligners, which are not on a runner, so
 # it is parse-checked rather than run.
 #
+# The fixtures live *inside the repository*, and every path handed to an
+# example is *relative* to it. Both matter: in CI `jennifer` is a shim around a
+# container that mounts only the workspace, at a different absolute path than
+# the runner sees. A fixture under /tmp is invisible in there, and an absolute
+# host path resolves to nothing. Relative paths under the checkout are the only
+# form that works both natively and through the container.
+#
 # Usage: tools/check-examples.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 JENNIFER="${JENNIFER:-jennifer}"
-work="$(mktemp -d)"
-trap "rm -rf \"$work\"" EXIT
+work=".ci-fixtures"
+rm -rf "$work"
+mkdir -p "$work"
+trap 'rm -rf "$work"' EXIT
 
 # --- fixtures --------------------------------------------------------------
 {
