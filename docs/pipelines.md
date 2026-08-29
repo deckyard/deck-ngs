@@ -24,7 +24,7 @@ pipeline.checkAll($results);
 io.printf("%s", pipeline.summary($results));
 ```
 
-Everything here needs the `exec` capability — the default `jennifer` binary.
+Everything here needs the `exec` capability - the default `jennifer` binary.
 
 ## Building a job
 
@@ -43,7 +43,7 @@ $j = pipeline.tolerant($j);                      # a non-zero exit is not fatal
 ```
 
 `pipeline.shell(name, cmdline)` is there when you genuinely need shell features
-— a pipe, a redirect, a glob:
+- a pipe, a redirect, a glob:
 
 ```jennifer
 def cmd as string init "bwa mem ref.fa " + core.shellQuote($fq)
@@ -67,7 +67,7 @@ def res as pipeline.Result init pipeline.run($j);
 $res.skipped;               # true when nothing ran
 ```
 
-A job with **no declared outputs always runs** — with nothing to compare, there
+A job with **no declared outputs always runs** - with nothing to compare, there
 is no basis for skipping.
 
 A declared input that does not exist raises `ngs.pipeline` rather than silently
@@ -86,7 +86,7 @@ begins. Results come back in the same order as the input, regardless of the
 order they finished. Pass `0` for the width to use `os.NCPU`.
 
 It runs independent jobs. It does not resolve dependencies between the jobs you
-hand it — order those yourself, or run them in stages:
+hand it - order those yourself, or run them in stages:
 
 ```jennifer
 def aligned as list of pipeline.Result init pipeline.runParallel($alignJobs, 4);
@@ -118,7 +118,7 @@ pipeline.summary($results);    # one "ok / skip / warn / fail" line per job
 ```
 
 `runAll` checks as it goes, so it stops at the first failure. `runParallel` does
-not — a wave is already running — so check the results yourself.
+not - a wave is already running - so check the results yourself.
 
 Note that stdout and stderr are **captured into memory**. That is fine for tool
 logs, which is what they are. For a tool that writes a large result to stdout,
@@ -138,7 +138,7 @@ pipeline.hasTool("bwa");     # the same test, as a bool
 the `exec` capability and cannot be confused by quoting.
 
 For intermediates, pair `workDir` with `defer` so they are cleaned up on every
-exit path — including a `throw`:
+exit path - including a `throw`:
 
 ```jennifer
 def work as string init pipeline.workDir("myrun");

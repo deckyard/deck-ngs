@@ -1,0 +1,177 @@
+# SPDX-License-Identifier: LGPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+#
+# Cut a GitHub release when a version tag is pushed.
+#
+# A deck has nothing to compile and no per-platform artifact: it is Jennifer
+# source, consumed by vendoring src/ into a project. So the release is the tag
+# plus the archive jvc would fetch, and the gate in front of it is the same
+# suite the test workflow runs - a red suite must not become a tag.
+#
+# The registry accepts either `0.2.0` or `v0.2.0` as the tag.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+*"
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify the tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Resolve the interpreter image
+        run: |
+          set -euo pipefail
+          source tools/deck-lib.sh && deck_load
+          image="$(deck_image)"
+          echo "JENNIFER_IMAGE=${image}" >> "$GITHUB_ENV"
+          echo "floor ${DECK_FLOOR} -> ${image}"
+
+      - name: Pull the interpreter image
+        run: docker pull "$JENNIFER_IMAGE"
+
+      - name: Install a `jennifer` shim that runs the image
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/jennifer" <<'SHIM'
+          #!/usr/bin/env bash
+          exec docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "${GITHUB_WORKSPACE}:/work" --workdir /work \
+            --entrypoint jennifer "${JENNIFER_IMAGE}" "$@"
+          SHIM
+          chmod +x "$HOME/.local/bin/jennifer"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # The manifest version is what jvc resolves against, so a tag that
+      # disagrees with it would publish a deck under the wrong number.
+      - name: Tag must match the manifest
+        run: |
+          set -euo pipefail
+          source tools/deck-lib.sh && deck_load
+          tag="${GITHUB_REF_NAME#v}"
+          if [[ "$tag" != "$DECK_VERSION" ]]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match ${DECK_MANIFEST} version ${DECK_VERSION}"
+            exit 1
+          fi
+          echo "${DECK_MANIFEST} declares ${DECK_VERSION}, matching the tag"
+
+      - name: Lint
+        run: |
+          set -euo pipefail
+          source tools/deck-lib.sh && deck_load
+          mapfile -t units < <(deck_lint_units)
+          jennifer lint "${units[@]}"
+
+      - name: Guards
+        run: |
+          tools/check-headers.sh
+          tools/check-overlays.sh
+          tools/check-cheatsheet.sh
+
+      - name: Run the test suites
+        run: |
+          set -euo pipefail
+          source tools/deck-lib.sh && deck_load
+          failed=0
+          while read -r suite; do
+            echo "::group::$suite"
+            jennifer test "$suite" || failed=1
+            echo "::endgroup::"
+          done < <(deck_test_suites)
+          exit "$failed"
+
+      - name: Run every example
+        run: tools/check-examples.sh
+
+      - name: Repo-specific checks
+        # An optional per-deck hook, so this workflow can stay identical across
+        # repositories while a deck that needs one more gate still gets it.
+        run: |
+          if [[ -x tools/check-extra.sh ]]; then
+            tools/check-extra.sh
+          else
+            echo "no tools/check-extra.sh in this deck"
+          fi
+
+  release:
+    name: Create the release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          # The notes list commit subjects since the previous tag.
+          fetch-depth: 0
+
+      - name: Build the release archive
+        id: pack
+        run: |
+          set -euo pipefail
+          source tools/deck-lib.sh && deck_load
+          tools/pack.sh dist
+          {
+            echo "name=${DECK_NAME}"
+            echo "slug=${DECK_SLUG}"
+            echo "version=${DECK_VERSION}"
+            echo "root=${DECK_SCOPE}-${DECK_SLUG}-${DECK_VERSION}"
+            echo "manual=$(deck_field package.urls.manual)"
+            echo "description=$(deck_field package.description)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write the release notes
+        env:
+          SLUG: ${{ steps.pack.outputs.slug }}
+          ROOT: ${{ steps.pack.outputs.root }}
+          MANUAL: ${{ steps.pack.outputs.manual }}
+          DESCRIPTION: ${{ steps.pack.outputs.description }}
+          NAME: ${{ steps.pack.outputs.name }}
+        run: |
+          set -euo pipefail
+          {
+            echo "${DESCRIPTION}"
+            echo
+            echo "**Documentation:** ${MANUAL}"
+            echo
+            echo "**Install** - \`jvc add ${NAME}\`, or vendor the \`src/\` subtree by hand:"
+            echo
+            echo '```sh'
+            echo "mkdir -p vendor/jennifer/${SLUG}"
+            echo "tar -xzf ${ROOT}.tar.gz -C vendor/jennifer/${SLUG} \\"
+            echo "    --strip-components=2 ${ROOT}/src"
+            echo '```'
+            echo
+            echo "## Changes"
+            echo
+          } > notes.md
+          previous="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [[ -n "$previous" ]]; then
+            git log --no-merges --pretty='- %s' "${previous}..${GITHUB_REF_NAME}" >> notes.md
+          else
+            echo "- first release" >> notes.md
+          fi
+          cat notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${{ steps.pack.outputs.slug }} ${{ steps.pack.outputs.version }}" \
+            --notes-file notes.md \
+            dist/*.tar.gz dist/*.tar.gz.sha256 dist/*.tar.gz.checksum

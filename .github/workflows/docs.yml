@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: LGPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+#
+# Build the book from docs/ with Jennifer's Grimoire and publish it to GitHub
+# Pages. Builds on every push and pull request so a broken outline fails before
+# it is merged; publishes only from main.
+#
+# Grimoire ships as a container with itself as the entrypoint, so this needs
+# nothing installed on the runner. docs/SUMMARY.md is the outline;
+# grimoire.toml is the configuration.
+#
+# One-time manual step: Settings -> Pages -> Source -> GitHub Actions.
+
+name: docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRIMOIRE_IMAGE: ghcr.io/jennifer-language/grimoire:latest
+
+jobs:
+  build:
+    name: Build the book
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Pull the Grimoire image
+        run: docker pull "$GRIMOIRE_IMAGE"
+
+      # --user keeps site/ owned by the runner so the artifact upload can read
+      # it. The build exits 1 when SUMMARY.md names a chapter with no file
+      # behind it, which is what makes a broken outline fail CI.
+      - name: Build the site
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "$PWD:/work" "$GRIMOIRE_IMAGE" build --verbose
+
+      - name: Check the build produced a site
+        run: |
+          set -euo pipefail
+          test -s site/index.html
+          echo "site/: $(find site -name '*.html' | wc -l) pages"
+
+      - name: Upload the Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # One deployment at a time, and never cancel one in flight: a half-applied
+    # Pages deployment is worse than a slightly stale one.
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

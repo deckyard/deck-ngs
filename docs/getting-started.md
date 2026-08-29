@@ -46,7 +46,7 @@ import "@jennifer/ngs/intervals.j" as intervals;
 The trailing `/` on the first form expands to the package-named entry module,
 `ngs/ngs.j`.
 
-Every module is independent — importing `fastq.j` does not drag in the pipeline
+Every module is independent - importing `fastq.j` does not drag in the pipeline
 layer. Import what you use.
 
 ## Repository layout
@@ -65,21 +65,21 @@ tools/              CI helpers
 
 Every file in `src/` carries an SPDX header and a
 `# pragma-jennifer-version: >=0.25.0` floor, which the interpreter checks when
-it reads the file — so an interpreter older than that refuses to run the deck
+it reads the file - so an interpreter older than that refuses to run the deck
 rather than failing somewhere less obvious. `deck.yaml` declares the same floor
 under `engines`.
 
 ## What your host needs
 
-Two features of the deck shell out, so they need the `exec` capability — the
-default `jennifer` binary, not `jennifer-tiny` — and a Unix host with `gzip` and
+Two features of the deck shell out, so they need the `exec` capability - the
+default `jennifer` binary, not `jennifer-tiny` - and a Unix host with `gzip` and
 `mkfifo` on `PATH`:
 
 - streaming gzip input and output ([why](streaming.md#how-gzip-streaming-works))
 - [pipeline orchestration](pipelines.md)
 
-Everything else — parsing, interval arithmetic, formatting, QC of uncompressed
-input — is pure Jennifer and runs on both binaries.
+Everything else - parsing, interval arithmetic, formatting, QC of uncompressed
+input - is pure Jennifer and runs on both binaries.
 
 Check once at startup rather than discovering it partway through a long run:
 
@@ -102,7 +102,7 @@ reporting, for a program that cannot do anything useful without both.
 ## Errors
 
 Every error this deck raises is an `Error` whose `kind` is namespaced
-`ngs.<module>` — `ngs.fastq`, `ngs.source`, `ngs.pipeline`, and so on. That
+`ngs.<module>` - `ngs.fastq`, `ngs.source`, `ngs.pipeline`, and so on. That
 makes them easy to separate from interpreter errors and from each other.
 
 This holds for malformed input too: a non-numeric coordinate raises
@@ -167,5 +167,5 @@ for suite in src/*_test.j; do jennifer test "$suite"; done
 
 A `MODULE_test.j` overlay sees the module's internals, so it calls exported and
 private functions alike by their bare names. It also inherits the module's
-imports — which is why an overlay must not re-import a module the module under
+imports - which is why an overlay must not re-import a module the module under
 test already imported, or the alias collides.

@@ -29,7 +29,7 @@ fastq.closeStrict($r);
 ```
 
 The tab-delimited formats can carry comments, headers and directives *between*
-records — a `track` line in BED, a `###` directive or a trailing `##FASTA`
+records - a `track` line in BED, a `###` directive or a trailing `##FASTA`
 section in GFF3. Skipping those can consume the last line of the file, which a
 `hasNext` peek cannot express: it would have to answer "is there another record"
 without reading, and a reader cannot un-read a line
@@ -51,7 +51,7 @@ while ($going) {
 bed.closeStrict($r);
 ```
 
-The `match` subject must be a variable of the enum type — `match (bed.next($r))`
+The `match` subject must be a variable of the enum type - `match (bed.next($r))`
 is rejected, because the subject has to be statically an enum.
 
 The variant name differs per module, since the payload does: `bed.Next.Feature`,
@@ -102,7 +102,7 @@ source.closeSink($k);
 
 ## BED
 
-BED maps directly onto `intervals.Interval` — both are 0-based and half-open —
+BED maps directly onto `intervals.Interval` - both are 0-based and half-open -
 so a parsed feature drops straight into [the interval engine](intervals.md).
 The first six columns are read; anything further (thickStart, blocks) is ignored.
 
@@ -111,8 +111,8 @@ def iv as intervals.Interval init bed.parse("chr1\t100\t200\tpeak1\t55\t-");
 bed.format($iv);                # chr1  100  200  peak1  55  -
 ```
 
-For feature sets that fit in memory — the usual case, since annotation is small
-next to sequencing data — skip the cursor entirely:
+For feature sets that fit in memory - the usual case, since annotation is small
+next to sequencing data - skip the cursor entirely:
 
 ```jennifer
 def peaks as list of intervals.Interval init bed.readAll("peaks.bed");
@@ -156,7 +156,7 @@ block that follows it.
 
 ## SAM
 
-SAM only. BAM and CRAM are [out of scope](index.md#out-of-scope) — pipe
+SAM only. BAM and CRAM are [out of scope](index.md#out-of-scope) - pipe
 `samtools view -h` in instead:
 
 ```sh
@@ -201,7 +201,7 @@ def sizes as map of string to int init sam.referenceSizes($r);
 ```
 
 The header is read by a short separate pass over the front of the file, so the
-record stream still starts clean. On **stdin** `header` is empty — a stream
+record stream still starts clean. On **stdin** `header` is empty - a stream
 cannot be re-read, and reading it eagerly would consume the first alignment with
 no way to put it back. `sam.headerOf(path)` reads a header on its own.
 

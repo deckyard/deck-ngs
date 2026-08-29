@@ -1,7 +1,8 @@
-# deck-ngs — `@jennifer/ngs`
+# deck-ngs - `@jennifer/ngs`
 
-[![CI](https://github.com/jennifer-language/deck-ngs/actions/workflows/ci.yml/badge.svg)](https://github.com/jennifer-language/deck-ngs/actions/workflows/ci.yml)
+[![test](https://github.com/jennifer-language/deck-ngs/actions/workflows/test.yml/badge.svg)](https://github.com/jennifer-language/deck-ngs/actions/workflows/test.yml)
 [![Documentation](https://img.shields.io/badge/docs-github%20pages-blue)](https://jennifer-language.github.io/deck-ngs/)
+[![release](https://img.shields.io/github/v/release/jennifer-language/deck-ngs)](https://github.com/jennifer-language/deck-ngs/releases/latest)
 
 Streaming file formats, read QC, interval arithmetic and pipeline orchestration
 for next-generation sequencing data, in [Jennifer](https://jennifer-lang.dev/).
@@ -18,7 +19,7 @@ compute stays in the native tools.
 preprocessing, interval arithmetic, pipeline orchestration.
 
 **Out of scope:** read alignment, assembly, variant calling and BAM/CRAM. Drive
-those through the `pipeline` module and parse their text output here —
+those through the `pipeline` module and parse their text output here -
 [why →](https://jennifer-language.github.io/deck-ngs/#out-of-scope).
 
 ## Install
@@ -53,7 +54,7 @@ io.printf("%s", qc.summary($report));
 `source` · `fastq` · `bed` · `gff` · `sam` · `vcf` · `intervals` ·
 `qc` · `trim` · `pipeline` · `core` · `ngs`
 
-[What each one does →](https://jennifer-language.github.io/deck-ngs/#the-modules) — and every exported name, with its
+[What each one does →](https://jennifer-language.github.io/deck-ngs/#the-modules) - and every exported name, with its
 signature, is in the [cheatsheet](https://jennifer-language.github.io/deck-ngs/cheatsheet.html).
 
 ## Documentation
@@ -63,7 +64,7 @@ The manual lives in `docs/` and is published to
 [coordinate systems](https://jennifer-language.github.io/deck-ngs/coordinates.html) before writing interval code, and
 [recipes](https://jennifer-language.github.io/deck-ngs/recipes.html) for worked end-to-end tasks.
 
-Changing the deck — the gates, the docs build, CI and the release process — is
+Changing the deck - the gates, the docs build, CI and the release process - is
 [Working on the deck](https://jennifer-language.github.io/deck-ngs/development.html).
 
 ## Licence

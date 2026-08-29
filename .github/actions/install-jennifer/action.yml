@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: LGPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+#
+# Build a Jennifer interpreter from source and put it, plus the bundled system
+# modules, where the runner can find it.
+#
+# Built rather than downloaded, deliberately. Every published release of the
+# language is marked as a GitHub *prerelease*, so `gh release view` has no
+# "latest" to resolve and the download approach fails outright. More to the
+# point, the newest release is 0.24.0 while every source file in this deck
+# declares `# pragma-jennifer-version: >=0.25.0`, which a released 0.24.0
+# refuses to load. A build from `main` carries a development version
+# (`0.24.0-dev+N.sha`), and a development build bypasses the version floor
+# while still being held to the engine allowlist - which is exactly the
+# arrangement the deck spec describes, and the one used locally.
+#
+# The build follows the language's own test workflow: full history for the
+# version codegen, Go from go.mod, TinyGo pinned.
+
+name: Install Jennifer
+description: Build the Jennifer interpreter from source at a development version
+
+inputs:
+  ref:
+    description: >
+      Git ref of jennifer-language/jennifer to build - a branch, tag or commit
+      sha. Pin this to a sha when a run needs to be reproducible; the default
+      tracks the language tip, which is where the >=0.25.0 surface lives.
+    required: false
+    default: main
+  tinygo:
+    description: >
+      Build `jennifer-tiny` as well. TinyGo is the slow half of the build, so
+      it is off by default and turned on only by the job that exercises the
+      constrained binary.
+    required: false
+    default: 'false'
+  tinygo-version:
+    description: TinyGo release to build the constrained binary with.
+    required: false
+    default: '0.41.1'
+
+runs:
+  using: composite
+  steps:
+    - name: Check out the interpreter
+      uses: actions/checkout@v7
+      with:
+        repository: jennifer-language/jennifer
+        ref: ${{ inputs.ref }}
+        path: .jennifer-src
+        # scripts/gen-version.sh reads `git describe --tags --long`, so a
+        # shallow checkout would embed a bare "dev" marker instead of a
+        # version the pragma check can reason about.
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: .jennifer-src/go.mod
+        cache-dependency-path: .jennifer-src/go.sum
+
+    - name: Set up TinyGo
+      if: inputs.tinygo == 'true'
+      uses: acifani/setup-tinygo@v3
+      with:
+        tinygo-version: ${{ inputs.tinygo-version }}
+
+    - name: Build
+      shell: bash
+      working-directory: .jennifer-src
+      run: |
+        set -euo pipefail
+        make build-go
+        if [ "${{ inputs.tinygo }}" = "true" ]; then
+          make build-tinygo
+        fi
+
+    - name: Install
+      shell: bash
+      run: |
+        set -euo pipefail
+        src="$GITHUB_WORKSPACE/.jennifer-src"
+
+        install -Dm755 "$src/jennifer" "$HOME/.local/bin/jennifer"
+        if [ -f "$src/jennifer-tiny" ]; then
+          install -Dm755 "$src/jennifer-tiny" "$HOME/.local/bin/jennifer-tiny"
+        fi
+
+        # The Jennifer-coded library modules a bare `import "name.j";` resolves
+        # against. They ship as `share/jennifer/modules/` in a release tarball
+        # and as `modules/` in the source tree.
+        mkdir -p "$HOME/.local/share/jennifer"
+        cp -r "$src/modules" "$HOME/.local/share/jennifer/modules"
+
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        # The compiled-in default module directory is a system path the runner
+        # does not have, so point the resolver at the copy just installed.
+        echo "JENNIFER_SYSMODDIR=$HOME/.local/share/jennifer/modules" >> "$GITHUB_ENV"
+
+        "$HOME/.local/bin/jennifer" version

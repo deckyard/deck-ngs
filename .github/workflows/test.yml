@@ -1,0 +1,153 @@
+# SPDX-License-Identifier: LGPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+#
+# The gate: formatting, lint, the drift guards, the white-box suites, and every
+# example actually running. Runs on every push to main and every pull request.
+#
+# This file is identical in every deck repository. Everything a deck differs in
+# - manifest format, one module or a module plus included topics, whether it
+# claims jennifer-tiny - is discovered by tools/deck-lib.sh at run time.
+
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: fmt, lint, guards, tests, examples
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # Which image is a property of the deck's floor, not of this file: a deck
+      # pinned to a released series is tested on that release, because a dev
+      # build would bypass the floor it declares. tools/deck-lib.sh decides.
+      - name: Resolve the interpreter image
+        run: |
+          set -euo pipefail
+          source tools/deck-lib.sh && deck_load
+          image="$(deck_image)"
+          echo "JENNIFER_IMAGE=${image}" >> "$GITHUB_ENV"
+          echo "floor ${DECK_FLOOR} -> ${image}"
+
+      - name: Pull the interpreter image
+        run: docker pull "$JENNIFER_IMAGE"
+
+      - name: Report the interpreter version
+        run: docker run --rm "$JENNIFER_IMAGE" version
+
+      # A thin wrapper so every later step is one word. --user keeps anything
+      # written into the workspace owned by the runner.
+      - name: Install a `jennifer` shim that runs the image
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/jennifer" <<'SHIM'
+          #!/usr/bin/env bash
+          exec docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "${GITHUB_WORKSPACE}:/work" --workdir /work \
+            --entrypoint jennifer "${JENNIFER_IMAGE}" "$@"
+          SHIM
+          chmod +x "$HOME/.local/bin/jennifer"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Identify the deck
+        run: |
+          source tools/deck-lib.sh && deck_load
+          echo "$DECK_NAME $DECK_VERSION - $DECK_MANIFEST, $DECK_SHAPE shape, tiny=$DECK_TINY"
+
+      - name: Check formatting
+        # `fmt -l` lists unformatted files and exits 1 when there are any.
+        run: |
+          set -euo pipefail
+          source tools/deck-lib.sh && deck_load
+          mapfile -t sources < <(deck_all_sources)
+          jennifer fmt -l "${sources[@]}"
+
+      - name: Lint
+        # `lint` exits 1 on a warning, 0 when clean. Only compilable units are
+        # linted: a topic file is `include`d rather than compiled, so in
+        # isolation its calls into the module read as undefined.
+        run: |
+          set -euo pipefail
+          source tools/deck-lib.sh && deck_load
+          mapfile -t units < <(deck_lint_units)
+          jennifer lint "${units[@]}"
+
+      - name: Check headers against the manifest
+        run: tools/check-headers.sh
+
+      - name: Check every module has a co-located test overlay
+        run: tools/check-overlays.sh
+
+      - name: Check the cheatsheet covers every export
+        run: tools/check-cheatsheet.sh
+
+      - name: Run the test suites
+        # One loop, so a failing file does not stop the rest from reporting.
+        run: |
+          set -euo pipefail
+          source tools/deck-lib.sh && deck_load
+          failed=0
+          while read -r suite; do
+            echo "::group::$suite"
+            jennifer test "$suite" || failed=1
+            echo "::endgroup::"
+          done < <(deck_test_suites)
+          exit "$failed"
+
+      - name: Run every example
+        run: tools/check-examples.sh
+
+      - name: Repo-specific checks
+        # An optional per-deck hook, so this workflow can stay identical across
+        # repositories while a deck that needs one more gate still gets it.
+        run: |
+          if [[ -x tools/check-extra.sh ]]; then
+            tools/check-extra.sh
+          else
+            echo "no tools/check-extra.sh in this deck"
+          fi
+
+  tiny:
+    name: jennifer-tiny
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # Only decks that list jennifer-tiny in [engines] make the claim, and a
+      # claim is only worth making if it is checked. No tiny container is
+      # published, so this job builds the interpreter instead.
+      - name: Does this deck claim jennifer-tiny?
+        id: claim
+        run: |
+          source tools/deck-lib.sh && deck_load
+          echo "tiny=$DECK_TINY" >> "$GITHUB_OUTPUT"
+
+      - name: Install Jennifer and jennifer-tiny
+        if: steps.claim.outputs.tiny == 'yes'
+        uses: ./.github/actions/install-jennifer
+        with:
+          tinygo: 'true'
+
+      - name: Exercise the deck on the constrained build
+        # `jennifer test` is a development feature the constrained build does
+        # not carry, so the check is that the deck loads and its examples
+        # produce output there.
+        if: steps.claim.outputs.tiny == 'yes'
+        env:
+          JENNIFER: jennifer-tiny
+        run: tools/check-examples.sh

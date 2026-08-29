@@ -85,7 +85,7 @@ for (def i in 0..len($sorted)) {
 ```
 
 Results from `countOverlaps` and `coverage` align with `intervals.sort(peaks)`,
-not with the input order — hence sorting the peaks alongside them.
+not with the input order - hence sorting the peaks alongside them.
 
 ## Which parts of my peaks are intergenic?
 

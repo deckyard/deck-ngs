@@ -109,7 +109,7 @@ export func parseFloat(what as string, label as string, raw as string) {
  *
  * Wrapping a whole record parse in one `try` and re-raising here costs a single
  * exception frame per record, where guarding each numeric column separately
- * cost one per column — measurably, on files with millions of records. An error
+ * cost one per column - measurably, on files with millions of records. An error
  * that already carries an `ngs.*` kind is re-thrown untouched, so the module
  * that diagnosed it keeps the credit.
  *

@@ -16,7 +16,7 @@ package:
     homepage: "https://github.com/jennifer-language/deck-ngs"
     manual: "https://jennifer-language.github.io/deck-ngs/"
 
-#  Only the default binary is listed — `jennifer-tiny` has neither
+#  Only the default binary is listed - `jennifer-tiny` has neither
 # `exec` nor the capability probe this deck's gzip and pipeline layers need.
 engines:
   jennifer: ">=0.25.0"

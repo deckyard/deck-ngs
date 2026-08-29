@@ -19,14 +19,14 @@ and a library that pretended otherwise would be one nobody could use.
 
 So the deck is deliberately **the glue and light-I/O layer, not the engine**.
 It is the part of a sequencing pipeline that is all string handling, bookkeeping
-and process management — the part where a real language with structs, enums,
+and process management - the part where a real language with structs, enums,
 error handling and a test runner beats three hundred lines of shell.
 
 ## In scope
 
 | area | what you get |
 | --- | --- |
-| [Streaming format I/O](formats.md) | FASTQ, SAM, VCF, BED, GFF3/GTF — parse, filter and convert as a stream |
+| [Streaming format I/O](formats.md) | FASTQ, SAM, VCF, BED, GFF3/GTF - parse, filter and convert as a stream |
 | [QC](qc.md) | per-base quality, length and GC distributions, adapter detection, one pass |
 | [Preprocessing](preprocessing.md) | quality and adapter trimming, length filtering, subsampling |
 | [Interval operations](intervals.md) | overlap, intersect, merge, subtract, coverage, complement |
@@ -36,10 +36,10 @@ error handling and a test runner beats three hundred lines of shell.
 
 Wrap the native tool and pipe to it; do not reimplement it here.
 
-- **Read alignment** — BWA, Bowtie2, minimap2
-- **De-novo assembly** — SPAdes
-- **Variant calling** — GATK
-- **BAM/CRAM handling** — additionally needs BGZF (blocked gzip for random
+- **Read alignment** - BWA, Bowtie2, minimap2
+- **De-novo assembly** - SPAdes
+- **Variant calling** - GATK
+- **BAM/CRAM handling** - additionally needs BGZF (blocked gzip for random
   access), which the `compress` library does not provide, and whose standalone
   value is limited without the downstream compute the deck omits
 
@@ -89,13 +89,13 @@ fastq.closeStrict($r);
 
 ## Where to go next
 
-- [Installing and importing](getting-started.md) — the vendor tree, and what
+- [Installing and importing](getting-started.md) - the vendor tree, and what
   your host needs to support
-- [Streaming large files](streaming.md) — how gzip streaming works, and why it
+- [Streaming large files](streaming.md) - how gzip streaming works, and why it
   is built the way it is
-- [Coordinate systems](coordinates.md) — the one page to read before writing
+- [Coordinate systems](coordinates.md) - the one page to read before writing
   interval code
-- [Performance](performance.md) — what is fast, what is slow, and the measured
+- [Performance](performance.md) - what is fast, what is slow, and the measured
   numbers behind both
 
 ## Licence

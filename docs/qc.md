@@ -30,8 +30,8 @@ adapter GGGGGGGGGG 1
 
 ## Options
 
-`qc.Options` has a valid zero value — every read, no per-position quality,
-Phred+33 — so you can enable one thing at a time. `qc.options()` returns the
+`qc.Options` has a valid zero value - every read, no per-position quality,
+Phred+33 - so you can enable one thing at a time. `qc.options()` returns the
 same defaults explicitly.
 
 | field | default | meaning |
@@ -81,7 +81,7 @@ Four probes are counted by default:
 
 `qc.defaultAdapters()` returns that list; set `Options.adapters` to override it.
 
-These are **occurrence counts**, not read counts — a read containing the adapter
+These are **occurrence counts**, not read counts - a read containing the adapter
 twice contributes two. In practice the two are nearly identical, since an
 adapter appears once per read.
 
@@ -96,7 +96,7 @@ every base in Jennifer is what makes naive QC slow: a per-base loop over 7.5 M
 bases takes about 14 seconds.
 
 `qc.analyze` instead buffers a batch of records and counts characters with
-`core.countIn`, which is `strings.replace` inside Go — one native scan per
+`core.countIn`, which is `strings.replace` inside Go - one native scan per
 character class per batch, rather than one interpreter step per base. The
 quality histogram is built the same way: one pass per Phred score, stopping as
 soon as every character in the batch is accounted for, so a typical Illumina
@@ -117,7 +117,7 @@ See [Performance](performance.md) for the measured numbers.
 ## Per-position quality
 
 Per-position mean quality is the one statistic that cannot be expressed as a
-character count — you have to look at position *i* of every read — so it costs
+character count - you have to look at position *i* of every read - so it costs
 one interpreter step per base and is opt-in.
 
 ```jennifer
@@ -152,6 +152,6 @@ it has 200 000 of them.
 
 ## Wrong encoding
 
-If a quality character decodes to a score outside 0–93, `analyze` raises
-`ngs.qc` naming the likely cause — an offset mismatch. Legacy Illumina 1.3–1.7
+If a quality character decodes to a score outside 0-93, `analyze` raises
+`ngs.qc` naming the likely cause - an offset mismatch. Legacy Illumina 1.3-1.7
 data needs `$opts.offset = fastq.PHRED64;`.

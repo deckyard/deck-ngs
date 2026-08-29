@@ -8,8 +8,8 @@ code.
 
 | format | convention | `chr1:100-200` means |
 | --- | --- | --- |
-| BED, `intervals.Interval` | **0-based, half-open** `[start, end)` | bases 101–200 in 1-based terms, 100 bases |
-| GFF3, GTF | **1-based, inclusive** | bases 100–200, 101 bases |
+| BED, `intervals.Interval` | **0-based, half-open** `[start, end)` | bases 101-200 in 1-based terms, 100 bases |
+| GFF3, GTF | **1-based, inclusive** | bases 100-200, 101 bases |
 | SAM `POS` | **1-based** | the leftmost aligned base |
 | VCF `POS` | **1-based** | the first base of `REF` |
 
@@ -39,7 +39,7 @@ Going back the other way:
 def f as gff.Feature init gff.fromInterval($iv, "ngs", "region");  # start + 1
 ```
 
-BED needs no conversion in either direction — `bed.parse` returns an
+BED needs no conversion in either direction - `bed.parse` returns an
 `intervals.Interval` directly, because the conventions already match.
 
 ## Worked example
@@ -58,7 +58,7 @@ intervals.length($iv);           # 100  - both conventions agree on the count
 ```
 
 The end coordinate does not move. A 1-based inclusive end and a 0-based
-exclusive end are the same number — only the start shifts. That is why
+exclusive end are the same number - only the start shifts. That is why
 converting by subtracting one from *both* is a common and wrong fix.
 
 ## What `sam.toInterval` does with CIGAR

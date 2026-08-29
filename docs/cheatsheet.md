@@ -3,7 +3,7 @@
 Every exported name in the deck, by module. A function's return type is not
 declared in Jennifer, so it is given in the description.
 
-For the reasoning behind these calls, start from the topic pages — this page is
+For the reasoning behind these calls, start from the topic pages - this page is
 the index, not the explanation.
 
 

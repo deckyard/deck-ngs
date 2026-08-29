@@ -3,7 +3,7 @@
 The `intervals` module is the bedtools-lite layer: overlap, merge, intersect,
 subtract, coverage and complement over genomic features.
 
-All of it works on `intervals.Interval`, which is **0-based and half-open** —
+All of it works on `intervals.Interval`, which is **0-based and half-open** -
 see [Coordinate systems](coordinates.md) for how to get records from other
 formats into it.
 
@@ -39,7 +39,7 @@ silently misbehaves later.
 ## Set operations
 
 Each of these takes a query set `a` and a target set `b`, and returns results
-aligned with `intervals.sort(a)` — sorted, not in input order.
+aligned with `intervals.sort(a)` - sorted, not in input order.
 
 | call | bedtools equivalent | returns |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ def outside as list of intervals.Interval init intervals.subtract($peaks, $exons
 ```
 
 `coverage` merges the target set first, so a base covered by two overlapping
-targets counts once. `intersect` does not — it reports every overlapping pair,
+targets counts once. `intersect` does not - it reports every overlapping pair,
 which is what you want when the pairing itself is the information.
 
 `subtract` splits: a query with a target through its middle yields two pieces,
@@ -69,7 +69,7 @@ onto the surviving pieces.
 ### Why these are fast
 
 All four run a **sorted sweep**, not a nested scan. Both sets are sorted once,
-then a cursor walks the targets forward as the queries advance — safe because a
+then a cursor walks the targets forward as the queries advance - safe because a
 target ending before the current query's start cannot overlap any later query
 either. That makes them linear in the input plus the number of reported
 overlaps, rather than quadratic.
@@ -84,7 +84,7 @@ intervals.merge($xs, 100);    # also joins features up to 100 bp apart
 intervals.totalLength($xs);   # bases covered by the union, counting overlaps once
 ```
 
-`merge` returns sorted, disjoint intervals with names cleared — a merged feature
+`merge` returns sorted, disjoint intervals with names cleared - a merged feature
 is not any one of its inputs, so keeping one input's name would be a lie.
 
 ## Complement

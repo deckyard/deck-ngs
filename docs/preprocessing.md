@@ -20,10 +20,10 @@ io.printf("%d of %d reads kept\n", $st.readsOut, $st.readsIn);
 `trim.run` applies the same steps fastp does, in the same order. Each is also
 exposed on its own, so a pipeline can apply only the parts it wants.
 
-1. **fixed clipping** — `clipFixed(rec, front, tail)`
-2. **adapter removal** — `clipAdapters(rec, adapters, minOverlap)`
-3. **quality trimming** — `clipQuality(rec, threshold, window, offset)`
-4. **length capping** — `truncate(rec, maxLength)`
+1. **fixed clipping** - `clipFixed(rec, front, tail)`
+2. **adapter removal** - `clipAdapters(rec, adapters, minOverlap)`
+3. **quality trimming** - `clipQuality(rec, threshold, window, offset)`
+4. **length capping** - `truncate(rec, maxLength)`
 
 Then filtering, on the trimmed record: `keeps(rec, opts)`.
 
@@ -33,7 +33,7 @@ you want the transformation without the streaming.
 ## Options
 
 The zero value is a no-op: it trims nothing and keeps everything.
-`trim.options()` returns useful defaults — adapter clipping on, sliding-window
+`trim.options()` returns useful defaults - adapter clipping on, sliding-window
 quality trimming at Q20, reads under 25 bases discarded.
 
 | field | default from `options()` | meaning |
@@ -53,7 +53,7 @@ quality trimming at Q20, reads under 25 bases discarded.
 
 Two cases, and both matter.
 
-A **full match** anywhere in the read is found with `strings.indexOf` — a native
+A **full match** anywhere in the read is found with `strings.indexOf` - a native
 substring scan. The read is cut at the adapter's start.
 
 A **partial adapter running off the 3' end** is the common case in real data:
@@ -85,7 +85,7 @@ trim.qualityKeepLength("IIII####", 20, 2, 33);   # 4 - keeps the good prefix
 ```
 
 The running window sum is maintained incrementally, so this is one pass over the
-quality string, not one per window. It is still per-base work — see
+quality string, not one per window. It is still per-base work - see
 [Performance](performance.md).
 
 ## Filtering
@@ -110,7 +110,7 @@ $st.lowQuality;
 
 Two ways, both streaming.
 
-**Deterministic**, and the one to reach for — reproducible with no seed to
+**Deterministic**, and the one to reach for - reproducible with no seed to
 record, and the natural way to cut a large run down to a test-sized sample:
 
 ```jennifer

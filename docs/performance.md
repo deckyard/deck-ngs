@@ -9,8 +9,8 @@ Line I/O is not the problem. Per-base loops are.
 
 ## The measurements
 
-All figures below are from 50 000 × 150 bp reads — 7.5 M bases, a 15 MB
-uncompressed FASTQ — on one core.
+All figures below are from 50 000 × 150 bp reads - 7.5 M bases, a 15 MB
+uncompressed FASTQ - on one core.
 
 | operation | time | throughput |
 | --- | --- | --- |
@@ -35,10 +35,10 @@ itself.
 per-character loop. It is the deck's main tool, and it is why
 [`qc`](qc.md) buffers a batch of records and then counts:
 
-- **GC and N content** — `core.gcCount` and `core.nCount`, four and two native
+- **GC and N content** - `core.gcCount` and `core.nCount`, four and two native
   scans per batch
-- **adapters** — one scan per probe per batch
-- **the quality histogram** — one scan per Phred score, stopping as soon as
+- **adapters** - one scan per probe per batch
+- **the quality histogram** - one scan per Phred score, stopping as soon as
   every character in the batch is accounted for, so typical Illumina data costs
   about forty scans rather than the full printable-ASCII range
 
@@ -55,14 +55,14 @@ Three things genuinely need a step per base, and each is opt-in or bounded:
 | `trim.qualityKeepLength` | a sliding window is inherently positional |
 | `fastq.qualities` / `meanQuality` / `minQuality` | decodes each score individually |
 
-For per-read work this is fine — 150 steps per read is nothing. It only matters
+For per-read work this is fine - 150 steps per read is nothing. It only matters
 when it becomes 150 steps × 150 million reads.
 
 ## Budgeting a real run
 
 Take **~16 100 reads/second** for a full QC pass as the working figure. A
 30× human WGS run of roughly 150 M reads is therefore around three hours of QC
-if you read all of it — and there is no reason to.
+if you read all of it - and there is no reason to.
 
 Subsample. QC statistics are stable long before the file is:
 
@@ -74,7 +74,7 @@ $opts.maxReads = 200000;     # and stop at 200k
 
 That is a few seconds, and it is what FastQC does too.
 
-For trimming there is no equivalent shortcut — every read has to be written —
+For trimming there is no equivalent shortcut - every read has to be written -
 so a full trimming pass over a large run is genuinely long. That is the point at
 which [`pipeline`](pipelines.md) should be calling `fastp` and this deck should
 be parsing its report.
@@ -92,7 +92,7 @@ not:
 | 3 000 × 30 kb, records + bases | 4 MB of bases | 74 MB |
 
 `qc.Options.maxBatchBases` is the second bound, and it is why the third row
-exists. Nothing about the results changes — the same file produces the same
+exists. Nothing about the results changes - the same file produces the same
 statistics either way.
 
 The lesson generalises: when you buffer records to hand a batch to Go, bound the
@@ -103,7 +103,7 @@ magnitude.
 
 Jennifer has value semantics: assignment and argument passing copy. In a module,
 a parameter the body never writes is passed by borrow instead, so read-only
-arguments are free — but a struct you *build up* per record is not.
+arguments are free - but a struct you *build up* per record is not.
 
 An early version of `qc.analyze` accumulated into the `Report` struct itself,
 which deep-copied a 94-element histogram and two maps **per record**. Moving the
@@ -111,7 +111,7 @@ hot counters to plain locals and assembling the `Report` at the end took the
 default path from 6.5 s to 4.0 s for the same work.
 
 The rule that follows: in a per-record loop, accumulate into scalars and
-locals. Batch-level state can live in a struct, because it is copied per batch —
+locals. Batch-level state can live in a struct, because it is copied per batch -
 2 000× less often.
 
 ## Building lists
@@ -140,7 +140,7 @@ that matters for throughput, because the work is happening in someone else's
 optimised C.
 
 `spawn` runs **Jennifer** concurrently. It deep-copies its enclosing scope at
-launch, so there are no shared-memory races — and no shared accumulators either.
+launch, so there are no shared-memory races - and no shared accumulators either.
 It suits per-sample work that returns a small summary; it does not turn a
 per-base loop into a fast one.
 
@@ -174,7 +174,7 @@ for (def i in 1..len($ivs)) {
 
 The same applies to `for (def iv in $xs)` over a list of structs: the loop
 variable is a copy per element. It is fine over a list of ints, and fine when
-the list is small — it is the per-record path where it matters.
+the list is small - it is the per-record path where it matters.
 
 ### One exception frame per record, not per field
 
@@ -184,7 +184,7 @@ function 2.5 µs, wrapped in a function with a `try` 3.5 µs.
 
 SAM has five numeric columns, so per-column guarding cost five frames per
 record. Wrapping the whole record parse in one `try` and re-raising through
-`core.reraise` costs one — and produces a *better* message, because it names the
+`core.reraise` costs one - and produces a *better* message, because it names the
 record rather than just the column.
 
 ### A helper call is not free
@@ -199,12 +199,12 @@ loop; that is where you inline them and say why in a comment.
 `intervals.sort` builds one zero-padded key string per element and hands them to
 `lists.sortBy`. Real BED and GFF files usually arrive coordinate-sorted, and
 every set operation sorts its inputs, so most of that work was redundant.
-A linear scan comparing fields directly — no keys, no allocation — turns the
+A linear scan comparing fields directly - no keys, no allocation - turns the
 common case into one pass, and costs nothing when the data *is* unsorted because
 it stops at the first pair out of order.
 
 Measured back to back on a 200 000-feature BED, read-merge-measure takes 16.9 s
-on shuffled input and 12.5 s on the same features coordinate-sorted — and the
+on shuffled input and 12.5 s on the same features coordinate-sorted - and the
 sorted case allocates 480 MB less, because the sort's output list never exists.
 
 ## Where to spend effort
@@ -213,7 +213,7 @@ In order:
 
 1. **Do not read what you do not need.** Subsample, or filter early in the
    stream.
-2. **Count in Go.** `core.countIn`, `strings.indexOf`, `strings.split` — anything
+2. **Count in Go.** `core.countIn`, `strings.indexOf`, `strings.split` - anything
    that pushes the loop below the interpreter.
 3. **Do not copy in the hot loop.** Index list elements rather than binding them;
    keep per-record accumulators in scalars, not structs.
@@ -221,8 +221,8 @@ In order:
    from `jennifer profile`. Three changes that looked obviously good beforehand
    did not survive measurement: a cheaper sort key bought 9%, building the key
    with `strings.join` was *slower* than plain concatenation, and a
-   single-character pre-filter in the adapter matcher — which skips a
-   slice-and-compare three times in four — came out 18% slower than the
+   single-character pre-filter in the adapter matcher - which skips a
+   slice-and-compare three times in four - came out 18% slower than the
    straightforward loop it replaced, because the slice it added cost as much as
    the one it avoided. All three were reverted. In an interpreter where every
    operation costs about the same, "does less work" and "runs fewer statements"
