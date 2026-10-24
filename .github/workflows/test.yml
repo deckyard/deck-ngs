@@ -1,12 +1,18 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 #
 # The gate: formatting, lint, the drift guards, the white-box suites, and every
-# example actually running. Runs on every push to main and every pull request.
+# example actually running. Runs on every push to main and every pull request,
+# and release.yml calls it in front of every release, so there is exactly one
+# definition of "green".
 #
 # This file is identical in every deck repository. Everything a deck differs in
 # - manifest format, one module or a module plus included topics, whether it
-# claims jennifer-tiny - is discovered by tools/deck-lib.sh at run time.
+# claims jennifer-tiny, which interpreter its floor implies - is discovered by
+# tools/deck-lib.sh at run time. Steps a deck may not need are no-ops there:
+# vendor-deps.sh without dependencies, inject-version.sh without a generated
+# version file, check-extra.sh when it does not exist. tools/check-all.sh runs
+# the same gate locally.
 
 name: test
 
@@ -15,6 +21,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -29,44 +36,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          # tools/version.sh derives a dev version from the tag history.
+          fetch-depth: 0
 
-      # Which image is a property of the deck's floor, not of this file: a deck
-      # pinned to a released series is tested on that release, because a dev
-      # build would bypass the floor it declares. tools/deck-lib.sh decides.
-      - name: Resolve the interpreter image
-        run: |
-          set -euo pipefail
-          source tools/deck-lib.sh && deck_load
-          image="$(deck_image)"
-          echo "JENNIFER_IMAGE=${image}" >> "$GITHUB_ENV"
-          echo "floor ${DECK_FLOOR} -> ${image}"
+      # First, because every later step trusts the shared files: a deck that
+      # edited one is running a gate nobody else runs.
+      - name: Check the shared files match the template
+        run: tools/check-shared.sh
 
-      - name: Pull the interpreter image
-        run: docker pull "$JENNIFER_IMAGE"
+      - name: Set up Jennifer
+        uses: ./.github/actions/setup-jennifer
 
-      - name: Report the interpreter version
-        run: docker run --rm "$JENNIFER_IMAGE" version
+      # Before anything loads the deck: lint and the suites resolve imports.
+      - name: Vendor the deck dependencies
+        run: tools/vendor-deps.sh
 
-      # A thin wrapper so every later step is one word. --user keeps anything
-      # written into the workspace owned by the runner.
-      - name: Install a `jennifer` shim that runs the image
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.local/bin"
-          cat > "$HOME/.local/bin/jennifer" <<'SHIM'
-          #!/usr/bin/env bash
-          exec docker run --rm --user "$(id -u):$(id -g)" \
-            --volume "${GITHUB_WORKSPACE}:/work" --workdir /work \
-            --entrypoint jennifer "${JENNIFER_IMAGE}" "$@"
-          SHIM
-          chmod +x "$HOME/.local/bin/jennifer"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Before fmt and the header guard, which both check the generated file.
+      - name: Inject the version from the git tags
+        run: tools/inject-version.sh
 
       - name: Identify the deck
         run: |
           source tools/deck-lib.sh && deck_load
           echo "$DECK_NAME $DECK_VERSION - $DECK_MANIFEST, $DECK_SHAPE shape, tiny=$DECK_TINY"
+          echo "\`$DECK_NAME\` \`$DECK_VERSION\` on \`$JENNIFER_IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check formatting
         # `fmt -l` lists unformatted files and exits 1 when there are any.
@@ -92,8 +87,18 @@ jobs:
       - name: Check every module has a co-located test overlay
         run: tools/check-overlays.sh
 
-      - name: Check the cheatsheet covers every export
-        run: tools/check-cheatsheet.sh
+      - name: Check src/ holds only Jennifer source
+        run: tools/check-src.sh
+
+      - name: Check every export is called from a test
+        run: tools/check-coverage.sh
+
+      - name: Check the docs against the code
+        # signatures, types, constants, docblocks, links and the book outline
+        run: tools/check-docs.sh
+
+      - name: Check no template identity is left
+        run: tools/check-identity.sh
 
       - name: Run the test suites
         # One loop, so a failing file does not stop the rest from reporting.
@@ -126,22 +131,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       # Only decks that list jennifer-tiny in [engines] make the claim, and a
       # claim is only worth making if it is checked. No tiny container is
-      # published, so this job builds the interpreter instead.
+      # published, so this job builds the interpreter - at the ref matching
+      # the deck's floor, the same rule the image choice follows.
       - name: Does this deck claim jennifer-tiny?
         id: claim
         run: |
+          set -euo pipefail
           source tools/deck-lib.sh && deck_load
           echo "tiny=$DECK_TINY" >> "$GITHUB_OUTPUT"
+          if [[ "$DECK_TINY" == yes ]]; then
+            ref="$(deck_source_ref)"
+            echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+            echo "floor ${DECK_FLOOR} -> interpreter source ${ref}"
+          fi
 
       - name: Install Jennifer and jennifer-tiny
         if: steps.claim.outputs.tiny == 'yes'
         uses: ./.github/actions/install-jennifer
         with:
+          ref: ${{ steps.claim.outputs.ref }}
           tinygo: 'true'
+
+      - name: Vendor the deck dependencies
+        if: steps.claim.outputs.tiny == 'yes'
+        run: tools/vendor-deps.sh
+
+      - name: Inject the version from the git tags
+        if: steps.claim.outputs.tiny == 'yes'
+        run: tools/inject-version.sh
 
       - name: Exercise the deck on the constrained build
         # `jennifer test` is a development feature the constrained build does

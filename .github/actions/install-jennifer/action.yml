@@ -1,31 +1,32 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 #
 # Build a Jennifer interpreter from source and put it, plus the bundled system
 # modules, where the runner can find it.
 #
-# Built rather than downloaded, deliberately. Every published release of the
+# Most jobs do not need this: setup-jennifer runs a published image. This is
+# for what no image carries - `jennifer-tiny`, the TinyGo build - and for
+# testing against an interpreter commit that has not been published.
+#
+# Built rather than downloaded, deliberately: every published release of the
 # language is marked as a GitHub *prerelease*, so `gh release view` has no
-# "latest" to resolve and the download approach fails outright. More to the
-# point, the newest release is 0.24.0 while every source file in this deck
-# declares `# pragma-jennifer-version: >=0.25.0`, which a released 0.24.0
-# refuses to load. A build from `main` carries a development version
-# (`0.24.0-dev+N.sha`), and a development build bypasses the version floor
-# while still being held to the engine allowlist - which is exactly the
-# arrangement the deck spec describes, and the one used locally.
+# "latest" to resolve. A build from `main` carries a development version
+# (`X.Y.Z-dev+N.sha`), which bypasses the version floor while still being held
+# to the engine allowlist; a build from a release tag is held to the floor like
+# the release itself. The caller picks the ref - tools/deck-lib.sh's
+# deck_source_ref gives the one that matches the deck's floor.
 #
 # The build follows the language's own test workflow: full history for the
 # version codegen, Go from go.mod, TinyGo pinned.
 
 name: Install Jennifer
-description: Build the Jennifer interpreter from source at a development version
+description: Build the Jennifer interpreter from source
 
 inputs:
   ref:
     description: >
       Git ref of jennifer-language/jennifer to build - a branch, tag or commit
-      sha. Pin this to a sha when a run needs to be reproducible; the default
-      tracks the language tip, which is where the >=0.25.0 surface lives.
+      sha. Pass deck_source_ref's answer so the build matches the deck's floor.
     required: false
     default: main
   tinygo:

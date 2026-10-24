@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 #
 # Shared shell library for the deck CI helpers. Source it, do not run it.
 #
@@ -16,8 +16,7 @@ deck_die() { echo "error: $*" >&2; exit 1; }
 # --- the manifest ----------------------------------------------------------
 #
 # jvc accepts deck.toml, deck.yaml, deck.yml and deck.json, first present wins.
-# The four decks deliberately use different ones to exercise that support, so
-# everything here reads whichever is there.
+# Decks do use different ones, so everything here reads whichever is there.
 
 deck_manifest() {
     local candidate
@@ -168,7 +167,7 @@ deck_load() {
 # the only thing that will load it at all.
 #
 # Bump this when a new interpreter is released.
-JENNIFER_NEWEST_RELEASE="0.24"
+JENNIFER_NEWEST_RELEASE="0.25"
 
 deck_image() {
     # An explicit override always wins - useful for bisecting.
@@ -195,7 +194,47 @@ deck_image() {
     fi
 }
 
+# The interpreter source ref matching deck_image, for a job that builds the
+# interpreter rather than pulling it - jennifer-tiny has no published image.
+# Same rule: `dev` builds main, a released series builds its newest patch tag,
+# and an image pinned to an exact version builds that version.
+JENNIFER_REPO="https://github.com/jennifer-language/jennifer"
+
+deck_source_ref() {
+    local tag series
+    tag="$(deck_image)"; tag="${tag##*:}"
+
+    if [[ "$tag" == dev ]]; then
+        printf 'main\n'
+        return 0
+    fi
+    if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        printf '%s\n' "$tag"
+        return 0
+    fi
+
+    series="${tag//./\\.}"
+    tag="$(git ls-remote --tags --refs "$JENNIFER_REPO" \
+        | sed -E 's#.*refs/tags/##' \
+        | grep -E "^${series}\.[0-9]+$" \
+        | sort -V | tail -1 || true)"
+    [[ -n "$tag" ]] || deck_die "no ${series//\\/}.x release tag at $JENNIFER_REPO"
+    printf '%s\n' "$tag"
+}
+
 # --- file sets -------------------------------------------------------------
+
+# The cheatsheet: docs/cheatsheet.md, or docs/reference/cheatsheet.md in a book
+# that has a reference part. Prints nothing when the deck has neither.
+deck_cheatsheet() {
+    local candidate
+    for candidate in docs/cheatsheet.md docs/reference/cheatsheet.md; do
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+}
 
 # Every .j file that must carry a header and be formatted.
 deck_all_sources() {

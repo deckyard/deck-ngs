@@ -1,132 +1,94 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 #
-# Cut a GitHub release when a version tag is pushed.
+# Cut a GitHub release when a stable version tag is pushed.
 #
 # A deck has nothing to compile and no per-platform artifact: it is Jennifer
 # source, consumed by vendoring src/ into a project. So the release is the tag
-# plus the archive jvc would fetch, and the gate in front of it is the same
-# suite the test workflow runs - a red suite must not become a tag.
+# plus the archive jvc would fetch, and the gate in front of it is test.yml
+# itself, called rather than copied - a red suite must not become a tag.
 #
-# The registry accepts either `0.2.0` or `v0.2.0` as the tag.
+# Release tags are stable semver only, without a prefix: `0.2.0`, never
+# `v0.2.0`. Neither a `v` tag nor a prerelease tag (`0.2.0-rc1`) is a release:
+# the trigger does not match them, and the gate below refuses one that slips
+# through or a manual run from a branch.
 
 name: release
 
 on:
   push:
     tags:
-      - "[0-9]+.[0-9]+.[0-9]+*"
-      - "v[0-9]+.[0-9]+.[0-9]+*"
+      - "[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  verify:
-    name: Verify the tag
+  tag:
+    name: Check the tag
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Resolve the interpreter image
+      # The trigger glob is loose; this is the gate. workflow_dispatch from a
+      # branch lands here too and fails, which is the intent.
+      - name: Tag must be a stable release
         run: |
           set -euo pipefail
-          source tools/deck-lib.sh && deck_load
-          image="$(deck_image)"
-          echo "JENNIFER_IMAGE=${image}" >> "$GITHUB_ENV"
-          echo "floor ${DECK_FLOOR} -> ${image}"
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::${GITHUB_REF_NAME} is not a stable release tag (N.N.N, no v prefix)"
+            exit 1
+          fi
 
-      - name: Pull the interpreter image
-        run: docker pull "$JENNIFER_IMAGE"
-
-      - name: Install a `jennifer` shim that runs the image
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.local/bin"
-          cat > "$HOME/.local/bin/jennifer" <<'SHIM'
-          #!/usr/bin/env bash
-          exec docker run --rm --user "$(id -u):$(id -g)" \
-            --volume "${GITHUB_WORKSPACE}:/work" --workdir /work \
-            --entrypoint jennifer "${JENNIFER_IMAGE}" "$@"
-          SHIM
-          chmod +x "$HOME/.local/bin/jennifer"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      # The manifest version is what jvc resolves against, so a tag that
-      # disagrees with it would publish a deck under the wrong number.
+      # The manifest version is what jvc resolves against, read from the
+      # default branch, so a tag that disagrees with it would publish the deck
+      # under a number nothing else knows about.
       - name: Tag must match the manifest
         run: |
           set -euo pipefail
           source tools/deck-lib.sh && deck_load
-          tag="${GITHUB_REF_NAME#v}"
-          if [[ "$tag" != "$DECK_VERSION" ]]; then
+          if [[ "${GITHUB_REF_NAME}" != "$DECK_VERSION" ]]; then
             echo "::error::tag ${GITHUB_REF_NAME} does not match ${DECK_MANIFEST} version ${DECK_VERSION}"
+            echo "::error::bump the manifest and commit it before tagging"
             exit 1
           fi
           echo "${DECK_MANIFEST} declares ${DECK_VERSION}, matching the tag"
 
-      - name: Lint
-        run: |
-          set -euo pipefail
-          source tools/deck-lib.sh && deck_load
-          mapfile -t units < <(deck_lint_units)
-          jennifer lint "${units[@]}"
+      - name: The deck must have been initialised
+        run: tools/check-identity.sh --release
 
-      - name: Guards
-        run: |
-          tools/check-headers.sh
-          tools/check-overlays.sh
-          tools/check-cheatsheet.sh
-
-      - name: Run the test suites
-        run: |
-          set -euo pipefail
-          source tools/deck-lib.sh && deck_load
-          failed=0
-          while read -r suite; do
-            echo "::group::$suite"
-            jennifer test "$suite" || failed=1
-            echo "::endgroup::"
-          done < <(deck_test_suites)
-          exit "$failed"
-
-      - name: Run every example
-        run: tools/check-examples.sh
-
-      - name: Repo-specific checks
-        # An optional per-deck hook, so this workflow can stay identical across
-        # repositories while a deck that needs one more gate still gets it.
-        run: |
-          if [[ -x tools/check-extra.sh ]]; then
-            tools/check-extra.sh
-          else
-            echo "no tools/check-extra.sh in this deck"
-          fi
+  test:
+    name: The gate
+    needs: tag
+    uses: ./.github/workflows/test.yml
 
   release:
     name: Create the release
-    needs: verify
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          # The notes list commit subjects since the previous tag.
+          # Tags for the version, and history for the notes.
           fetch-depth: 0
 
+      # A deck with a generated version file ships it stamped with the tag.
       - name: Build the release archive
         id: pack
         run: |
           set -euo pipefail
+          tools/inject-version.sh
           source tools/deck-lib.sh && deck_load
           tools/pack.sh dist
           {
             echo "name=${DECK_NAME}"
             echo "slug=${DECK_SLUG}"
+            echo "scope=${DECK_SCOPE}"
             echo "version=${DECK_VERSION}"
             echo "root=${DECK_SCOPE}-${DECK_SLUG}-${DECK_VERSION}"
             echo "manual=$(deck_field package.urls.manual)"
@@ -136,6 +98,7 @@ jobs:
       - name: Write the release notes
         env:
           SLUG: ${{ steps.pack.outputs.slug }}
+          SCOPE: ${{ steps.pack.outputs.scope }}
           ROOT: ${{ steps.pack.outputs.root }}
           MANUAL: ${{ steps.pack.outputs.manual }}
           DESCRIPTION: ${{ steps.pack.outputs.description }}
@@ -150,8 +113,8 @@ jobs:
             echo "**Install** - \`jvc add ${NAME}\`, or vendor the \`src/\` subtree by hand:"
             echo
             echo '```sh'
-            echo "mkdir -p vendor/jennifer/${SLUG}"
-            echo "tar -xzf ${ROOT}.tar.gz -C vendor/jennifer/${SLUG} \\"
+            echo "mkdir -p vendor/${SCOPE}/${SLUG}"
+            echo "tar -xzf ${ROOT}.tar.gz -C vendor/${SCOPE}/${SLUG} \\"
             echo "    --strip-components=2 ${ROOT}/src"
             echo '```'
             echo
