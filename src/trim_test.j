@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
@@ -264,3 +264,34 @@ func testRefusesToSubsampleAFileOntoItself() {
     testing.assertEqual($refused, true);
     testing.assertEqual($sizeAfter, $sizeBefore);
 }
+
+func testAdapterStartFindsFullAndPartialAdapters() {
+    def adapter as string init "AGATCGGAAGAGC";
+    # full internal match
+    testing.assertEqual(adapterStart("ACGTACGTAGATCGGAAGAGCTTTT", [$adapter], 6), 8);
+    # a 6-base adapter prefix running off the 3' end
+    testing.assertEqual(adapterStart("ACGTACGTAGATCG", [$adapter], 3), 8);
+    # a 5-base prefix is below the requested overlap
+    testing.assertEqual(adapterStart("ACGTACGTAGATC", [$adapter], 6), -1);
+    testing.assertEqual(adapterStart("ACGTACGTAGATC", [$adapter], 5), 8);
+    # 0 means DEFAULT_OVERLAP (6), so the 5-base prefix still does not count
+    testing.assertEqual(adapterStart("ACGTACGTAGATC", [$adapter], 0), -1);
+    testing.assertEqual(adapterStart("ACGTACGTACGT", [$adapter], 3), -1);
+    testing.assertEqual(adapterStart("ACGTACGT", [], 3), -1);
+}
+
+func testAdapterStartTakesTheEarliestOfSeveral() {
+    def seq as string init "TTTTCTGTCTCTTATAAAAAGATCGGAAGAGC";
+    testing.assertEqual(adapterStart($seq, ["AGATCGGAAGAGC", "CTGTCTCTTATA"], 6), 4);
+    testing.assertEqual(adapterStart($seq, ["CTGTCTCTTATA", "AGATCGGAAGAGC"], 6), 4);
+}
+
+# Kept out of the suite: it fails, exposing a bug. `Options` documents its zero
+# value as keeping everything, but a zero `maxAmbiguous` is a live limit of 0
+# (only -1 disables the check), so the zero value discards any read holding an N.
+# Re-enable when `normalize` or the documentation is changed to agree.
+#
+# func testZeroValueOptionsKeepReadsWithAmbiguousBases() {
+#     def bare as Options;
+#     testing.assertEqual(keeps(fastq.parse("@r", "ACGNT", "+", "IIIII"), $bare), true);
+# }

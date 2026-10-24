@@ -1,525 +1,602 @@
 # Cheatsheet
 
-Every exported name in the deck, by module. A function's return type is not
-declared in Jennifer, so it is given in the description.
-
-For the reasoning behind these calls, start from the topic pages - this page is
-the index, not the explanation.
-
+Every export, by module. Jennifer does not declare return types, so the
+`returns` column gives them. Every error is an `Error` whose `kind` is
+`ngs.<module>` unless noted.
 
 ## `core`
 
-Shared primitives the rest of the deck is built on: error construction, Go-speed counting, tab-delimited field access.
+Errors, field parsing, Go-speed counting and shell quoting. Every other module
+imports it.
 
+| constant | value | notes |
+| --- | --- | --- |
+| `core.ERROR_KIND` | `"ngs"` | prefix of every error kind the deck raises |
+| `core.TAB` | `"\t"` | field separator of every text format here |
 
-### Constants
-
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `core.ERROR_KIND` | `string` | `"ngs"` | Deck-wide error kind prefix, so a caller can match on `$e.kind`. |
-| `core.TAB` | `string` | `"\t"` | Tab, the field separator every text format in this deck uses. |
-
-
-### Functions
-
-| function | description |
-| --- | --- |
-| `core.fail(what as string, message as string)` | Raise a deck error with a stable kind. |
-| `core.countIn(haystack as string, needle as string)` | Count non-overlapping occurrences of `needle` in `haystack`. |
-| `core.parseInt(what as string, label as string, raw as string)` | Parse an integer field, reporting a malformed value as a deck error. |
-| `core.parseFloat(what as string, label as string, raw as string)` | Parse a float field, reporting a malformed value as a deck error. |
-| `core.reraise(what as string, line as string, e as Error)` | Re-raise a parse failure as a deck error naming the record it came from. |
-| `core.splitTab(line as string)` | Split a tab-delimited line into its fields. |
-| `core.field(fields as list of string, i as int, fallback as string)` | Field `i` of `fields`, or `fallback` when the column is absent. |
-| `core.intField(what as string, fields as list of string, i as int, fallback as int)` | Integer field `i`, or `fallback` when absent, empty or a placeholder dot. |
-| `core.floatField(what as string, fields as list of string, i as int, fallback as float)` | Float field `i`, or `fallback` when absent, empty or a placeholder dot. |
-| `core.isSkippable(line as string, marker as string)` | Whether a line should be skipped by a record reader: empty or a comment. |
-| `core.padNum(n as int, width as int)` | Left-pad an integer with zeros to `width`, for building sortable string keys. |
-| `core.shellQuote(s as string)` | Quote a string for safe inclusion in a POSIX `sh -c` command line. |
-| `core.reverseComplement(seq as string)` | Reverse complement of a DNA sequence. |
-| `core.complementBase(b as string)` | Complement of a single nucleotide character. |
-| `core.gcCount(seq as string)` | G+C count of a sequence, counted at Go speed. |
-| `core.nCount(seq as string)` | Ambiguous-base (N) count of a sequence, counted at Go speed. |
-| `core.hasTool(name as string)` | Whether an executable is on `PATH`. |
-| `core.sameFile(a as string, b as string)` | Whether two paths resolve to the same file. |
-
+| function | returns | notes |
+| --- | --- | --- |
+| `core.fail(what, message)` | - | always raises kind `ngs.<what>` |
+| `core.countIn(haystack, needle)` | `int` | non-overlapping occurrences, one native scan; 0 for an empty needle |
+| `core.parseInt(what, label, raw)` | `int` | raises `ngs.<what>` naming `label` when `raw` is not an integer |
+| `core.parseFloat(what, label, raw)` | `float` | raises `ngs.<what>` when `raw` is not a number |
+| `core.reraise(what, line, e)` | - | re-raises `e` untouched if its kind starts `ngs.`, else raises `ngs.<what>` naming `line` |
+| `core.splitTab(line)` | `list of string` | split on tabs |
+| `core.field(fields, i, fallback)` | `string` | column `i` (0-based), or `fallback` when out of range |
+| `core.intField(what, fields, i, fallback)` | `int` | `fallback` for a missing, empty or `.` column; raises `ngs.<what>` on a non-integer |
+| `core.floatField(what, fields, i, fallback)` | `float` | as `intField`, for floats |
+| `core.isSkippable(line, marker)` | `bool` | true for a blank line or one starting with `marker` |
+| `core.padNum(n, width)` | `string` | zero-padded to `width`; negative values unpadded |
+| `core.shellQuote(s)` | `string` | single-quoted for POSIX `sh`, embedded `'` escaped |
+| `core.reverseComplement(seq)` | `string` | ACGTUN and IUPAC codes, case kept; other characters unchanged |
+| `core.complementBase(b)` | `string` | complement of one base, or `b` when not a nucleotide code |
+| `core.gcCount(seq)` | `int` | G, C, g and c, counted natively |
+| `core.nCount(seq)` | `int` | N and n, counted natively |
+| `core.hasTool(name)` | `bool` | a regular file of that name on `PATH` (executable bit not checked); walks `PATH` with `fs`, no `exec` needed; a name with a separator is checked as a path |
+| `core.sameFile(a, b)` | `bool` | both exist and resolve, symlinks followed, to the same file |
 
 ## `source`
 
-Streaming line sources and sinks, with transparent gzip in both directions.
+Streaming line sources and sinks, gzip in both directions
+([Streaming large files](streaming.md)). Errors are `ngs.source`.
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `source.Source` | struct | An open line source. Treat it as an opaque handle and pass it around by value: the `fs.File` and `os.Process` fields are registry handles, so copies share the same underlying stream. |
-| `source.Sink` | struct | An open line sink, the write-side counterpart of `Source`. |
+| `source.GZIP_MAGIC1` | `0x1f` | first gzip magic byte (RFC 1952) |
+| `source.GZIP_MAGIC2` | `0x8b` | second gzip magic byte |
 
+### `source.Source`
 
-### Constants
+An open line source. Copies share the stream: `file` and `proc` are registry
+handles.
 
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `source.GZIP_MAGIC1` | `int` | `0x1f` | First byte of the gzip magic number (RFC 1952). |
-| `source.GZIP_MAGIC2` | `int` | `0x8b` | Second byte of the gzip magic number (RFC 1952). |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `source.isGzip(path as string)` | Whether a file starts with the gzip magic number. |
-| `source.open(path as string)` | Open a file for streaming line reads, decompressing gzip transparently. |
-| `source.openPlain(path as string)` | Open an uncompressed file for streaming line reads. |
-| `source.openStdin()` | Open standard input as a line source, so the deck composes with Unix pipes. |
-| `source.openGzip(path as string)` | Open a gzipped file for streaming line reads at constant memory. |
-| `source.openGzipBuffered(path as string)` | Open a gzipped file by decompressing it whole, for hosts without `exec`. |
-| `source.hasNext(s as Source)` | Whether another line can be read from the source. |
-| `source.nextLine(s as Source)` | Read the next line, with its line terminator stripped. |
-| `source.close(s as Source)` | Close a source and release its child process and temporary files. |
-| `source.closeStrict(s as Source)` | Close a fully-consumed source, raising if its decompressor failed. |
-| `source.create(path as string)` | Open a file for streaming line writes, gzip-compressing when the name ends in `.gz`. |
-| `source.createPlain(path as string)` | Open an uncompressed file for streaming line writes. |
-| `source.createGzip(path as string)` | Open a gzip-compressed file for streaming line writes at constant memory. |
-| `source.writeText(k as Sink, text as string)` | Write text to a sink verbatim, adding no line terminator. |
-| `source.writeLine(k as Sink, line as string)` | Write one line to a sink, appending a newline. |
-| `source.closeSink(k as Sink)` | Close a sink, flush it and wait for its compressor to finish. |
+| `file as fs.File` | the handle lines are read from |
+| `proc as os.Process` | the decompressor, when `piped` |
+| `helper as string` | FIFO directory or temp file removed on close, `""` when none |
+| `piped as bool` | whether a child process feeds the source |
+| `origin as string` | the path opened, or `"<stdin>"` |
 
+### `source.Sink`
+
+An open line sink.
+
+| field | notes |
+| --- | --- |
+| `file as fs.File` | the handle lines are written to |
+| `proc as os.Process` | the compressor, when `piped` |
+| `helper as string` | FIFO directory removed on close, `""` when none |
+| `piped as bool` | whether a child process drains the sink |
+| `origin as string` | the path opened |
+
+| function | returns | notes |
+| --- | --- | --- |
+| `source.isGzip(path)` | `bool` | first two bytes are `1f 8b`; raises when the file is missing |
+| `source.open(path)` | `Source` | gzip detected from content |
+| `source.openPlain(path)` | `Source` | raises when the file is missing |
+| `source.openStdin()` | `Source` | via `/dev/stdin`, Unix only; raises when it is missing, `runtime` when it cannot be reopened |
+| `source.openGzip(path)` | `Source` | streams `gzip -dc` through a FIFO; raises without `exec` or when `mkfifo` fails |
+| `source.openGzipBuffered(path)` | `Source` | decompresses the whole file in memory to a temp file; small inputs only |
+| `source.hasNext(s)` | `bool` | false at end of stream |
+| `source.nextLine(s)` | `string` | next line, terminator stripped; raises at end of stream |
+| `source.close(s)` | `int` | decompressor exit code, 0 without one; releases child and temp files even when it raises |
+| `source.closeStrict(s)` | - | raises when the decompressor exited non-zero; use after reading to the end |
+| `source.create(path)` | `Sink` | gzip when the name ends in `.gz` |
+| `source.createPlain(path)` | `Sink` | creates or truncates |
+| `source.createGzip(path)` | `Sink` | `gzip -c` reading a FIFO; raises without `exec` or when `mkfifo` fails |
+| `source.writeText(k, text)` | - | writes `text` as is |
+| `source.writeLine(k, line)` | - | writes `line` and `"\n"` |
+| `source.closeSink(k)` | `int` | flushes, waits for the compressor; its exit code, 0 without one |
 
 ## `fastq`
 
-FASTQ records, streaming reader and writer, per-record accessors.
+FASTQ records, reader and writer ([Formats](formats.md#fastq)). Errors are
+`ngs.fastq`.
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `fastq.Read` | struct | One FASTQ record. |
-| `fastq.Reader` | struct | A streaming FASTQ cursor. |
+| `fastq.PHRED33` | `33` | Sanger / Illumina 1.8+ quality offset |
+| `fastq.PHRED64` | `64` | legacy Illumina 1.3-1.7 offset |
 
+### `fastq.Read`
 
-### Constants
-
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `fastq.PHRED33` | `int` | `33` | Sanger / Illumina 1.8+ quality offset; the modern default. |
-| `fastq.PHRED64` | `int` | `64` | Legacy Illumina 1.3-1.7 quality offset. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `fastq.open(path as string)` | Open a FASTQ file for streaming, decompressing gzip transparently. |
-| `fastq.openStdin()` | Open standard input as a FASTQ stream, for use in Unix pipes. |
-| `fastq.hasNext(r as Reader)` | Whether another record is available. |
-| `fastq.next(r as Reader)` | Read the next record. |
-| `fastq.close(r as Reader)` | Close the reader and release its decompressor. |
-| `fastq.closeStrict(r as Reader)` | Close a fully-consumed reader, raising if its decompressor failed. |
-| `fastq.parse(header as string, seq as string, plus as string, qual as string)` | Build a record from its four raw lines, validating the FASTQ shape. |
-| `fastq.format(rec as Read)` | Render a record back to its four-line FASTQ text, newline-terminated. |
-| `fastq.toFasta(rec as Read)` | Render a record as two-line FASTA text, newline-terminated. |
-| `fastq.headerOf(rec as Read)` | The full header text of a record: id plus description when present. |
-| `fastq.write(k as source.Sink, rec as Read)` | Write a record to a sink as FASTQ. |
-| `fastq.length(rec as Read)` | Read length in bases. |
-| `fastq.qualities(rec as Read, offset as int)` | Decode the quality string to Phred scores. |
-| `fastq.meanQuality(rec as Read, offset as int)` | Mean Phred quality of a record. |
-| `fastq.minQuality(rec as Read, offset as int)` | Lowest Phred score in a record. |
-| `fastq.gcPercent(rec as Read)` | G+C content of a record as a percentage, counted at Go speed. |
-| `fastq.ambiguousCount(rec as Read)` | Number of ambiguous (N) bases in a record, counted at Go speed. |
-| `fastq.subseq(rec as Read, start as int, end as int)` | A sub-range of a record, slicing sequence and quality together. |
-| `fastq.reverseComplement(rec as Read)` | Reverse complement of a record, with the quality string reversed to match. |
+| `id as string` | header up to the first space, without `@` |
+| `desc as string` | header after the first space, `""` when none |
+| `seq as string` | sequence |
+| `qual as string` | raw ASCII qualities, same length as `seq` |
 
+### `fastq.Reader`
+
+| field | notes |
+| --- | --- |
+| `src as source.Source` | the underlying line source |
+
+| function | returns | notes |
+| --- | --- | --- |
+| `fastq.open(path)` | `Reader` | gzip transparent |
+| `fastq.openStdin()` | `Reader` | standard input |
+| `fastq.hasNext(r)` | `bool` | another record available |
+| `fastq.next(r)` | `Read` | raises on a truncated or malformed record, naming its header |
+| `fastq.close(r)` | `int` | decompressor exit code |
+| `fastq.closeStrict(r)` | - | raises when the decompressor failed |
+| `fastq.parse(header, seq, plus, qual)` | `Read` | raises on a bad `@` or `+` marker or a length mismatch |
+| `fastq.format(rec)` | `string` | four lines, newline-terminated, separator `+` |
+| `fastq.toFasta(rec)` | `string` | two lines, newline-terminated |
+| `fastq.headerOf(rec)` | `string` | `id`, plus `" " + desc` when present |
+| `fastq.write(k, rec)` | - | writes `format(rec)` to a sink |
+| `fastq.length(rec)` | `int` | bases |
+| `fastq.qualities(rec, offset)` | `list of int` | one Phred score per base; one step per base |
+| `fastq.meanQuality(rec, offset)` | `float` | arithmetic mean Phred, 0.0 for an empty read |
+| `fastq.minQuality(rec, offset)` | `int` | lowest Phred, -1 for an empty read |
+| `fastq.gcPercent(rec)` | `float` | 0-100, 0.0 for an empty read |
+| `fastq.ambiguousCount(rec)` | `int` | N bases |
+| `fastq.subseq(rec, start, end)` | `Read` | 0-based half-open slice of `seq` and `qual`; raises when out of range |
+| `fastq.reverseComplement(rec)` | `Read` | qualities reversed to match |
 
 ## `bed`
 
-Streaming BED reading and writing, straight onto the interval engine.
+BED as `intervals.Interval` ([Formats](formats.md#bed)). Errors are `ngs.bed`.
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `bed.Reader` | struct | A streaming BED cursor. |
-| `bed.Next` | enum | The result of advancing a BED cursor: either a feature or end-of-stream. |
+| `bed.MISSING` | `"."` | written for an absent name or strand |
 
+### `bed.Reader`
 
-### Constants
-
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `bed.MISSING` | `string` | `"."` | Placeholder written for an absent name or strand. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `bed.open(path as string)` | Open a BED file for streaming, decompressing gzip transparently. |
-| `bed.openStdin()` | Open standard input as a BED stream. |
-| `bed.next(r as Reader)` | Advance the cursor to the next feature, skipping blank, comment, `track` and `browser` lines. |
-| `bed.close(r as Reader)` | Close the cursor and release its decompressor. |
-| `bed.closeStrict(r as Reader)` | Close a fully-consumed cursor, raising if its decompressor failed. |
-| `bed.parse(line as string)` | Parse one BED line into an interval. |
-| `bed.format(iv as intervals.Interval)` | Render an interval as a six-column BED line. |
-| `bed.readAll(path as string)` | Read a whole BED file into memory. |
-| `bed.writeAll(path as string, ivs as list of intervals.Interval)` | Write intervals to a BED file, gzipping when the name ends in `.gz`. |
-| `bed.write(k as source.Sink, iv as intervals.Interval)` | Write one interval to an already-open sink. |
+| `src as source.Source` | the underlying line source |
 
+### `bed.Next`
+
+| variant | notes |
+| --- | --- |
+| `Feature` | the next record, in `value` (`intervals.Interval`) |
+| `Done` | end of stream |
+
+| function | returns | notes |
+| --- | --- | --- |
+| `bed.open(path)` | `Reader` | gzip transparent |
+| `bed.openStdin()` | `Reader` | standard input |
+| `bed.next(r)` | `Next` | skips blank, `#`, `track` and `browser` lines |
+| `bed.close(r)` | `int` | decompressor exit code |
+| `bed.closeStrict(r)` | - | raises when the decompressor failed |
+| `bed.parse(line)` | `intervals.Interval` | first six columns; raises on fewer than three or a non-numeric field |
+| `bed.format(iv)` | `string` | BED6, no newline; `.` for an empty name or strand |
+| `bed.readAll(path)` | `list of intervals.Interval` | whole file, file order |
+| `bed.writeAll(path, ivs)` | - | gzip when the name ends in `.gz`; raises when the compressor fails |
+| `bed.write(k, iv)` | - | one BED6 line to an open sink |
 
 ## `gff`
 
-Streaming GFF3 and GTF reading and writing, with attribute parsing in both styles.
+GFF3 and GTF ([Formats](formats.md#gff3-and-gtf)). Errors are `ngs.gff`.
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `gff.Feature` | struct | One GFF3 or GTF feature. |
-| `gff.Reader` | struct | A streaming GFF/GTF cursor. |
-| `gff.Next` | enum | The result of advancing a GFF cursor. |
+| `gff.MISSING` | `"."` | placeholder for an absent column |
+| `gff.STYLE_GFF3` | `"gff3"` | `key=value;` attributes, percent-escaped |
+| `gff.STYLE_GTF` | `"gtf"` | `key "value";` attributes |
 
+### `gff.Feature`
 
-### Constants
-
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `gff.MISSING` | `string` | `"."` | Placeholder used for an absent column. |
-| `gff.STYLE_GFF3` | `string` | `"gff3"` | Attribute style: `key=value;` pairs, percent-escaped. |
-| `gff.STYLE_GTF` | `string` | `"gtf"` | Attribute style: `key "value";` pairs. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `gff.open(path as string)` | Open a GFF3 or GTF file for streaming, decompressing gzip transparently. |
-| `gff.openStdin()` | Open standard input as a GFF/GTF stream. |
-| `gff.next(r as Reader)` | Advance the cursor to the next feature. |
-| `gff.close(r as Reader)` | Close the cursor and release its decompressor. |
-| `gff.closeStrict(r as Reader)` | Close a fully-consumed cursor, raising if its decompressor failed. |
-| `gff.parse(line as string)` | Parse one GFF3 or GTF record. |
-| `gff.parseAttributes(text as string)` | Parse a ninth-column attribute string in either GFF3 or GTF style. |
-| `gff.styleOf(text as string)` | Which attribute style a ninth column uses. |
-| `gff.attribute(f as Feature, key as string, fallback as string)` | Read an attribute, or a fallback when it is absent. |
-| `gff.identifier(f as Feature)` | The feature's identifier: GFF3 `ID`, else GTF `transcript_id`, else `gene_id`. |
-| `gff.name(f as Feature)` | The feature's display name: GFF3 `Name`, else `gene_name`, else `identifier`. |
-| `gff.toInterval(f as Feature)` | Convert a feature to a half-open interval for the interval engine. |
-| `gff.fromInterval(iv as intervals.Interval, origin as string, kind as string)` | Build a feature from a half-open interval, converting back to 1-based. |
-| `gff.format(f as Feature, style as string)` | Render a feature as a nine-column record. |
-| `gff.formatAttributes(attrs as map of string to string, style as string)` | Render an attribute map in GFF3 or GTF style. |
-| `gff.readAll(path as string)` | Read a whole annotation file into memory. |
-| `gff.readIntervals(path as string, kind as string)` | Read an annotation file directly as half-open intervals. |
+| `seqid as string` | reference sequence |
+| `origin as string` | the `source` column |
+| `kind as string` | the `type` column |
+| `start as int` | 1-based, inclusive, as written |
+| `end as int` | 1-based, inclusive, as written |
+| `score as float` | 0.0 when absent |
+| `strand as string` | `+`, `-` or `.` |
+| `phase as int` | CDS phase 0-2, -1 when absent |
+| `attributes as map of string to string` | the ninth column, in file order |
 
+### `gff.Reader`
+
+| field | notes |
+| --- | --- |
+| `src as source.Source` | the underlying line source |
+
+### `gff.Next`
+
+| variant | notes |
+| --- | --- |
+| `Record` | the next feature, in `value` (`Feature`) |
+| `Done` | end of stream, or a `##FASTA` line |
+
+| function | returns | notes |
+| --- | --- | --- |
+| `gff.open(path)` | `Reader` | gzip transparent |
+| `gff.openStdin()` | `Reader` | standard input |
+| `gff.next(r)` | `Next` | skips blank and `#` lines, stops at `##FASTA` |
+| `gff.close(r)` | `int` | decompressor exit code |
+| `gff.closeStrict(r)` | - | raises when the decompressor failed |
+| `gff.parse(line)` | `Feature` | style detected per record; raises on fewer than nine columns |
+| `gff.parseAttributes(text)` | `map of string to string` | GFF3 values percent-decoded; empty for `""` or `.` |
+| `gff.styleOf(text)` | `string` | `STYLE_GFF3` or `STYLE_GTF`, from the first pair |
+| `gff.attribute(f, key, fallback)` | `string` | value, or `fallback` |
+| `gff.identifier(f)` | `string` | `ID`, else `transcript_id`, else `gene_id`, else `""` |
+| `gff.name(f)` | `string` | `Name`, else `gene_name`, else `identifier(f)` |
+| `gff.toInterval(f)` | `intervals.Interval` | `start - 1`, `end` kept, named by `name(f)` |
+| `gff.fromInterval(iv, origin, kind)` | `Feature` | `start + 1`; `ID` from the interval's name; phase -1 |
+| `gff.format(f, style)` | `string` | nine columns, no newline; score 0.0 written as `.` |
+| `gff.formatAttributes(attrs, style)` | `string` | `.` for an empty map; GFF3 escapes only reserved characters |
+| `gff.readAll(path)` | `list of Feature` | whole file up to `##FASTA`; closes without checking the decompressor |
+| `gff.readIntervals(path, kind)` | `list of intervals.Interval` | converted features of type `kind`, `""` for all |
 
 ## `sam`
 
-Streaming SAM reading and writing, FLAG and CIGAR handling.
+SAM alignments ([Formats](formats.md#sam)). Errors are `ngs.sam`.
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `sam.Record` | struct | One SAM alignment record. |
-| `sam.CigarOp` | struct | One CIGAR operation. |
-| `sam.Reader` | struct | A streaming SAM cursor, carrying the file's header block. |
-| `sam.Next` | enum | The result of advancing a SAM cursor. |
+| `sam.FLAG_PAIRED` | `0x1` | paired in sequencing |
+| `sam.FLAG_PROPER_PAIR` | `0x2` | each segment properly aligned |
+| `sam.FLAG_UNMAPPED` | `0x4` | segment unmapped |
+| `sam.FLAG_MATE_UNMAPPED` | `0x8` | mate unmapped |
+| `sam.FLAG_REVERSE` | `0x10` | segment on the reverse strand |
+| `sam.FLAG_MATE_REVERSE` | `0x20` | mate on the reverse strand |
+| `sam.FLAG_FIRST` | `0x40` | first segment of the template |
+| `sam.FLAG_LAST` | `0x80` | last segment of the template |
+| `sam.FLAG_SECONDARY` | `0x100` | secondary alignment |
+| `sam.FLAG_QC_FAIL` | `0x200` | failed platform or vendor QC |
+| `sam.FLAG_DUPLICATE` | `0x400` | PCR or optical duplicate |
+| `sam.FLAG_SUPPLEMENTARY` | `0x800` | supplementary alignment |
+| `sam.MISSING` | `"*"` | placeholder for an absent column |
 
+### `sam.Record`
 
-### Constants
-
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `sam.FLAG_PAIRED` | `int` | `0x1` | Read is paired in sequencing. |
-| `sam.FLAG_PROPER_PAIR` | `int` | `0x2` | Each segment is properly aligned according to the aligner. |
-| `sam.FLAG_UNMAPPED` | `int` | `0x4` | This segment is unmapped. |
-| `sam.FLAG_MATE_UNMAPPED` | `int` | `0x8` | The mate segment is unmapped. |
-| `sam.FLAG_REVERSE` | `int` | `0x10` | This segment is on the reverse strand. |
-| `sam.FLAG_MATE_REVERSE` | `int` | `0x20` | The mate segment is on the reverse strand. |
-| `sam.FLAG_FIRST` | `int` | `0x40` | This is the first segment of the template. |
-| `sam.FLAG_LAST` | `int` | `0x80` | This is the last segment of the template. |
-| `sam.FLAG_SECONDARY` | `int` | `0x100` | This is a secondary alignment. |
-| `sam.FLAG_QC_FAIL` | `int` | `0x200` | The read failed platform or vendor quality checks. |
-| `sam.FLAG_DUPLICATE` | `int` | `0x400` | The read is a PCR or optical duplicate. |
-| `sam.FLAG_SUPPLEMENTARY` | `int` | `0x800` | This is a supplementary alignment. |
-| `sam.MISSING` | `string` | `"*"` | Placeholder used for an absent column. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `sam.open(path as string)` | Open a SAM file for streaming, capturing its header block. |
-| `sam.openStdin()` | Open standard input as a SAM stream. |
-| `sam.next(r as Reader)` | Advance the cursor to the next alignment record. |
-| `sam.close(r as Reader)` | Close the cursor and release its decompressor. |
-| `sam.closeStrict(r as Reader)` | Close a fully-consumed cursor, raising if its decompressor failed. |
-| `sam.parse(line as string)` | Parse one SAM alignment line. |
-| `sam.format(rec as Record)` | Render an alignment back to a SAM record line. |
-| `sam.hasFlag(rec as Record, bit as int)` | Whether a FLAG bit is set on a record. |
-| `sam.isUnmapped(rec as Record)` | Whether the record is unmapped. |
-| `sam.isReverse(rec as Record)` | Whether the record is mapped to the reverse strand. |
-| `sam.isSecondary(rec as Record)` | Whether the record is a secondary alignment. |
-| `sam.isSupplementary(rec as Record)` | Whether the record is a supplementary alignment. |
-| `sam.isDuplicate(rec as Record)` | Whether the record is flagged as a PCR or optical duplicate. |
-| `sam.isPrimary(rec as Record)` | Whether the record is a primary alignment: mapped, not secondary, not supplementary. |
-| `sam.strandOf(rec as Record)` | The strand a record aligns to. |
-| `sam.parseCigar(cigar as string)` | Split a CIGAR string into its operations. |
-| `sam.referenceLength(cigar as string)` | Number of reference bases a CIGAR string consumes. |
-| `sam.queryLength(cigar as string)` | Number of query bases a CIGAR string consumes. |
-| `sam.toInterval(rec as Record)` | The reference interval an alignment covers, as a half-open interval. |
-| `sam.tagValue(rec as Record, tagName as string, fallback as string)` | Read the value of an optional tag. |
-| `sam.referenceSizes(r as Reader)` | The reference sequences declared in the header, as chromosome sizes. |
-| `sam.headerOf(path as string)` | Read just the `@` header block of a SAM file. |
+| `qname as string` | query template name |
+| `flag as int` | FLAG bits |
+| `rname as string` | reference name, `*` when unmapped |
+| `pos as int` | 1-based leftmost position, 0 when unmapped |
+| `mapq as int` | mapping quality |
+| `cigar as string` | raw CIGAR, `*` when unavailable |
+| `rnext as string` | mate's reference name |
+| `pnext as int` | mate's 1-based position |
+| `tlen as int` | observed template length, signed |
+| `seq as string` | segment sequence, `*` when absent |
+| `qual as string` | raw ASCII qualities, `*` when absent |
+| `tags as list of string` | optional `TAG:TYPE:VALUE` columns, verbatim |
 
+### `sam.CigarOp`
+
+| field | notes |
+| --- | --- |
+| `length as int` | bases covered |
+| `op as string` | one of `M I D N S H P = X` |
+
+### `sam.Reader`
+
+| field | notes |
+| --- | --- |
+| `src as source.Source` | the underlying line source |
+| `header as list of string` | the `@` lines, empty on stdin |
+
+### `sam.Next`
+
+| variant | notes |
+| --- | --- |
+| `Alignment` | the next record, in `value` (`Record`) |
+| `Done` | end of stream |
+
+| function | returns | notes |
+| --- | --- | --- |
+| `sam.open(path)` | `Reader` | reads the header in a separate pass |
+| `sam.openStdin()` | `Reader` | standard input; `header` empty |
+| `sam.next(r)` | `Next` | skips `@` and blank lines |
+| `sam.close(r)` | `int` | decompressor exit code |
+| `sam.closeStrict(r)` | - | raises when the decompressor failed |
+| `sam.parse(line)` | `Record` | raises on fewer than eleven columns or a non-numeric field |
+| `sam.format(rec)` | `string` | one record, no newline |
+| `sam.hasFlag(rec, bit)` | `bool` | true when any bit of `bit` is set |
+| `sam.isUnmapped(rec)` | `bool` | FLAG `0x4` |
+| `sam.isReverse(rec)` | `bool` | FLAG `0x10` |
+| `sam.isSecondary(rec)` | `bool` | FLAG `0x100` |
+| `sam.isSupplementary(rec)` | `bool` | FLAG `0x800` |
+| `sam.isDuplicate(rec)` | `bool` | FLAG `0x400` |
+| `sam.isPrimary(rec)` | `bool` | none of `0x4`, `0x100`, `0x800` |
+| `sam.strandOf(rec)` | `string` | `+`, `-`, or `.` when unmapped |
+| `sam.parseCigar(cigar)` | `list of CigarOp` | empty for `*`; raises on a malformed CIGAR |
+| `sam.referenceLength(cigar)` | `int` | sum of `M D N = X` |
+| `sam.queryLength(cigar)` | `int` | sum of `M I S = X` |
+| `sam.toInterval(rec)` | `intervals.Interval` | `pos - 1`, end from CIGAR (sequence length for `*`); named by `qname`, scored by MAPQ; raises when unmapped |
+| `sam.tagValue(rec, tagName, fallback)` | `string` | value with `TAG:TYPE:` removed, or `fallback` |
+| `sam.referenceSizes(r)` | `map of string to int` | `@SQ` `SN` to `LN` |
+| `sam.headerOf(path)` | `list of string` | the `@` lines only |
 
 ## `vcf`
 
-Streaming VCF reading and writing, INFO and per-sample FORMAT access.
+VCF variants ([Formats](formats.md#vcf)). Errors are `ngs.vcf`.
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `vcf.Variant` | struct | One VCF variant record. |
-| `vcf.Reader` | struct | A streaming VCF cursor, carrying the file's header. |
-| `vcf.Next` | enum | The result of advancing a VCF cursor. |
+| `vcf.MISSING` | `"."` | placeholder for an absent column |
+| `vcf.FIXED_COLUMNS` | `9` | columns before the first sample: eight fixed plus FORMAT |
 
+### `vcf.Variant`
 
-### Constants
-
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `vcf.MISSING` | `string` | `"."` | Placeholder used for an absent column. |
-| `vcf.FIXED_COLUMNS` | `int` | `9` | Number of fixed columns before the per-sample genotype columns. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `vcf.open(path as string)` | Open a VCF file for streaming, capturing its header. |
-| `vcf.openStdin()` | Open standard input as a VCF stream. |
-| `vcf.next(r as Reader)` | Advance the cursor to the next variant record. |
-| `vcf.close(r as Reader)` | Close the cursor and release its decompressor. |
-| `vcf.closeStrict(r as Reader)` | Close a fully-consumed cursor, raising if its decompressor failed. |
-| `vcf.headerOf(path as string)` | Read just the header lines of a VCF file. |
-| `vcf.parse(line as string)` | Parse one VCF variant line. |
-| `vcf.parseInfo(text as string)` | Parse a VCF INFO column into a map. |
-| `vcf.info(v as Variant, key as string, fallback as string)` | Read an INFO field, or a fallback when it is absent. |
-| `vcf.hasInfo(v as Variant, key as string)` | Whether an INFO flag is present. |
-| `vcf.passed(v as Variant)` | Whether the variant passed every filter. |
-| `vcf.isSnv(v as Variant)` | Whether the variant is a single-nucleotide substitution. |
-| `vcf.isIndel(v as Variant)` | Whether the variant is an insertion or deletion. |
-| `vcf.sampleValue(v as Variant, sampleIndex as int, key as string, fallback as string)` | The per-sample value of one FORMAT key. |
-| `vcf.genotype(v as Variant, sampleIndex as int)` | The genotype call of one sample. |
-| `vcf.toInterval(v as Variant)` | The reference span of a variant, as a half-open interval. |
-| `vcf.format(v as Variant)` | Render a variant back to a VCF record line. |
-| `vcf.formatInfo(entries as map of string to string)` | Render an INFO map back to its column text. |
+| `chrom as string` | reference sequence |
+| `pos as int` | 1-based position of the first REF base |
+| `id as string` | `""` when `.` |
+| `ref as string` | reference allele |
+| `alt as list of string` | alternate alleles, empty when `.` |
+| `qual as float` | Phred-scaled quality, -1.0 when `.` |
+| `filter as string` | FILTER verbatim |
+| `info as map of string to string` | INFO; a flag maps to `""` |
+| `format as list of string` | FORMAT keys in order |
+| `samples as list of string` | per-sample columns verbatim |
 
+### `vcf.Reader`
+
+| field | notes |
+| --- | --- |
+| `src as source.Source` | the underlying line source |
+| `meta as list of string` | `##` lines, empty on stdin |
+| `samples as list of string` | sample names from `#CHROM`, empty on stdin |
+
+### `vcf.Next`
+
+| variant | notes |
+| --- | --- |
+| `Record` | the next variant, in `value` (`Variant`) |
+| `Done` | end of stream |
+
+| function | returns | notes |
+| --- | --- | --- |
+| `vcf.open(path)` | `Reader` | reads the header in a separate pass |
+| `vcf.openStdin()` | `Reader` | standard input; `meta` and `samples` empty |
+| `vcf.next(r)` | `Next` | skips `#` and blank lines |
+| `vcf.close(r)` | `int` | decompressor exit code |
+| `vcf.closeStrict(r)` | - | raises when the decompressor failed |
+| `vcf.headerOf(path)` | `list of string` | the leading `#` lines |
+| `vcf.parse(line)` | `Variant` | raises on fewer than eight columns or a non-numeric POS or QUAL |
+| `vcf.parseInfo(text)` | `map of string to string` | value from the first `=`; flags map to `""`; empty for `.` |
+| `vcf.info(v, key, fallback)` | `string` | INFO value, or `fallback` |
+| `vcf.hasInfo(v, key)` | `bool` | key present |
+| `vcf.passed(v)` | `bool` | FILTER is `PASS`, `.` or empty |
+| `vcf.isSnv(v)` | `bool` | REF and every ALT one of `A C G T N` |
+| `vcf.isIndel(v)` | `bool` | an ALT of different length from REF; symbolic and breakend ALTs excluded |
+| `vcf.sampleValue(v, sampleIndex, key, fallback)` | `string` | FORMAT value for a 0-based sample, or `fallback` |
+| `vcf.genotype(v, sampleIndex)` | `string` | GT, `./.` when unavailable |
+| `vcf.toInterval(v)` | `intervals.Interval` | `pos - 1`, spans REF; named by ID; QUAL as score, 0.0 when absent |
+| `vcf.format(v)` | `string` | one record, no newline; QUAL rendered as a float |
+| `vcf.formatInfo(entries)` | `string` | `key=value` or bare flag, `;`-joined; `.` when empty |
 
 ## `intervals`
 
-Interval arithmetic over genomic features - the bedtools-lite layer.
+Interval arithmetic, 0-based half-open ([Interval arithmetic](intervals.md)).
+Errors are `ngs.intervals`. Set operations return results in the order of
+`sort(a)`.
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `intervals.Interval` | struct | A half-open genomic interval. |
+| `intervals.KEY_WIDTH` | `12` | digits coordinates are zero-padded to in sort keys |
+| `intervals.MAX_COORDINATE` | `1000000000000` | one past the largest allowed coordinate (10^12) |
 
+### `intervals.Interval`
 
-### Constants
-
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `intervals.KEY_WIDTH` | `int` | `12` | Width used when zero-padding coordinates into sort keys. |
-| `intervals.MAX_COORDINATE` | `int` | `1000000000000` | One past the largest coordinate an interval may carry. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `intervals.make(chrom as string, start as int, end as int)` | Build an unnamed, unstranded interval. |
-| `intervals.named(chrom as string,
- start as int,
- end as int,
- name as string,
- score as float,
- strand as string)` | Build a fully specified interval. |
-| `intervals.length(iv as Interval)` | Width of an interval in bases. |
-| `intervals.overlaps(a as Interval, b as Interval)` | Whether two intervals share at least one base. |
-| `intervals.overlapLength(a as Interval, b as Interval)` | Number of bases two intervals share. |
-| `intervals.contains(outer as Interval, inner as Interval)` | Whether `outer` fully contains `inner`. |
-| `intervals.intersection(a as Interval, b as Interval)` | The shared region of two overlapping intervals. |
-| `intervals.sortKey(iv as Interval)` | Sort key for one interval: chromosome, then zero-padded start and end. |
-| `intervals.sort(ivs as list of Interval)` | Sort intervals by chromosome then start then end. |
-| `intervals.merge(ivs as list of Interval, maxGap as int)` | Merge overlapping and nearby intervals, per chromosome. |
-| `intervals.totalLength(ivs as list of Interval)` | Total number of bases covered, counting overlaps once. |
-| `intervals.intersect(a as list of Interval, b as list of Interval)` | Pairwise intersection regions between two interval sets. |
-| `intervals.countOverlaps(a as list of Interval, b as list of Interval)` | Count, for each query interval, how many target intervals it overlaps. |
-| `intervals.coverage(a as list of Interval, b as list of Interval)` | Bases of each query interval covered by the target set. |
-| `intervals.subtract(a as list of Interval, b as list of Interval)` | Remove from each query interval every base covered by the target set. |
-| `intervals.complement(ivs as list of Interval, sizes as map of string to int)` | The gaps between intervals, across whole chromosomes. |
-| `intervals.slop(iv as Interval, left as int, right as int, limit as int)` | Grow an interval on both sides, clamped at zero and an optional chromosome end. |
-| `intervals.byChromosome(ivs as list of Interval)` | Group intervals by chromosome. |
-| `intervals.toBed3(iv as Interval)` | Render an interval as a three-column BED line. |
+| `chrom as string` | reference sequence |
+| `start as int` | 0-based, inclusive |
+| `end as int` | 0-based, exclusive |
+| `name as string` | `""` when unnamed |
+| `score as float` | 0.0 when absent |
+| `strand as string` | `+`, `-` or `.` |
 
+| function | returns | notes |
+| --- | --- | --- |
+| `intervals.make(chrom, start, end)` | `Interval` | unnamed, strand `.`; validated as `named` |
+| `intervals.named(chrom, start, end, name, score, strand)` | `Interval` | raises on a negative or inverted range or an end of `MAX_COORDINATE` or more |
+| `intervals.length(iv)` | `int` | `end - start` |
+| `intervals.overlaps(a, b)` | `bool` | share a base; book-ended intervals do not |
+| `intervals.overlapLength(a, b)` | `int` | shared bases, 0 when none |
+| `intervals.contains(outer, inner)` | `bool` | same chromosome, `inner` within `outer` |
+| `intervals.intersection(a, b)` | `Interval` | shared region with `a`'s name, score and strand; raises when they do not overlap |
+| `intervals.sortKey(iv)` | `string` | chrom, start, end, tab-separated, coordinates zero-padded; exported as the `func` value for `lists.sortBy` |
+| `intervals.sort(ivs)` | `list of Interval` | by chromosome as text, start, end; sorted input returned as is |
+| `intervals.merge(ivs, maxGap)` | `list of Interval` | per chromosome; 0 joins overlapping and book-ended (`bedtools merge -d 0`); names, scores, strands cleared |
+| `intervals.totalLength(ivs)` | `int` | bases in the union |
+| `intervals.intersect(a, b)` | `list of Interval` | one per overlapping pair, `a`'s name (`bedtools intersect`) |
+| `intervals.countOverlaps(a, b)` | `list of int` | targets overlapping each query (`intersect -c`) |
+| `intervals.coverage(a, b)` | `list of int` | bases of each query covered by merged `b` |
+| `intervals.subtract(a, b)` | `list of Interval` | uncovered pieces of each query, names kept (`bedtools subtract`) |
+| `intervals.complement(ivs, sizes)` | `list of Interval` | gaps on the chromosomes in `sizes`, sorted (`bedtools complement`) |
+| `intervals.slop(iv, left, right, limit)` | `Interval` | grown, clamped at 0 and at `limit` when `limit > 0` |
+| `intervals.byChromosome(ivs)` | `map of string to list of Interval` | sorted groups |
+| `intervals.toBed3(iv)` | `string` | `chrom\tstart\tend`, no newline |
 
 ## `qc`
 
-One-pass streaming read QC - the FastQC-lite layer.
+One-pass read QC ([Read quality control](qc.md)).
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `qc.Options` | struct | How to run an analysis. |
-| `qc.Report` | struct | Everything one pass measured. |
+| `qc.MAX_PHRED` | `94` | size of the quality histogram, Phred 0-93 |
+| `qc.Q30` | `30` | threshold for `q30Percent` |
+| `qc.DEFAULT_BATCH` | `2000` | records per counting batch |
+| `qc.DEFAULT_BATCH_BASES` | `4000000` | bases per counting batch |
+| `qc.ADAPTER_TRUSEQ` | `"AGATCGGAAGAGC"` | Illumina TruSeq / NEBNext universal |
+| `qc.ADAPTER_NEXTERA` | `"CTGTCTCTTATACACATCT"` | Nextera / transposase |
+| `qc.ADAPTER_SMALL_RNA` | `"TGGAATTCTCGG"` | Illumina small-RNA 3' |
+| `qc.ARTEFACT_POLY_G` | `"GGGGGGGGGG"` | poly-G of two-colour chemistry (NovaSeq, NextSeq) |
 
+### `qc.Options`
 
-### Constants
+The zero value is valid.
 
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `qc.MAX_PHRED` | `int` | `94` | Highest Phred score tracked; covers the whole printable ASCII range. |
-| `qc.Q30` | `int` | `30` | Quality score at or above which a base is counted towards Q30. |
-| `qc.DEFAULT_BATCH` | `int` | `2000` | Records buffered before each batch of Go-speed counting. |
-| `qc.DEFAULT_BATCH_BASES` | `int` | `4000000` | Bases buffered before a batch is counted, whichever limit is reached first. |
-| `qc.ADAPTER_TRUSEQ` | `string` | `"AGATCGGAAGAGC"` | Illumina TruSeq / NEBNext universal adapter prefix. |
-| `qc.ADAPTER_NEXTERA` | `string` | `"CTGTCTCTTATACACATCT"` | Nextera / Illumina transposase adapter prefix. |
-| `qc.ADAPTER_SMALL_RNA` | `string` | `"TGGAATTCTCGG"` | Illumina small-RNA 3' adapter prefix. |
-| `qc.ARTEFACT_POLY_G` | `string` | `"GGGGGGGGGG"` | Poly-G run, the two-colour-chemistry artefact seen on NovaSeq / NextSeq. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `qc.options()` | Default analysis options: every read, no per-position quality, Phred+33. |
-| `qc.defaultAdapters()` | The adapters and artefacts counted when `Options.adapters` is empty. |
-| `qc.analyze(path as string, opts as Options)` | Run a single streaming pass over a FASTQ file. |
-| `qc.meanQuality(rep as Report)` | Mean Phred quality across every sampled base. |
-| `qc.q30Percent(rep as Report)` | Percentage of sampled bases at Q30 or better. |
-| `qc.gcPercent(rep as Report)` | G+C content of the sampled bases as a percentage. |
-| `qc.meanLength(rep as Report)` | Mean sampled read length. |
-| `qc.perBaseMean(rep as Report)` | Mean quality at each read position. |
-| `qc.summary(rep as Report)` | Render a report as a human-readable text summary. |
+| `maxReads as int` | stop after sampling this many; 0 is no limit |
+| `everyNth as int` | sample one read in N; 0 or 1 is every read |
+| `perBase as bool` | collect per-position quality, one step per base |
+| `offset as int` | quality offset; 0 means 33 |
+| `batchSize as int` | records per batch; 0 means `DEFAULT_BATCH` |
+| `maxBatchBases as int` | bases per batch; 0 means `DEFAULT_BATCH_BASES` |
+| `adapters as list of string` | probes to count; empty means `defaultAdapters()` |
 
+### `qc.Report`
+
+| field | notes |
+| --- | --- |
+| `reads as int` | records read |
+| `sampled as int` | records measured |
+| `bases as int` | bases in sampled records |
+| `minLength as int` | shortest sampled read, 0 when none |
+| `maxLength as int` | longest sampled read |
+| `gcBases as int` | G and C bases |
+| `nBases as int` | N bases |
+| `qualHist as list of int` | bases per Phred score, indexed 0-93 |
+| `lengthHist as map of int to int` | read length to read count |
+| `adapterHits as map of string to int` | probe to occurrences |
+| `perBaseSum as list of int` | quality sum per position, `perBase` only |
+| `perBaseCount as list of int` | reads reaching each position, `perBase` only |
+
+| function | returns | notes |
+| --- | --- | --- |
+| `qc.options()` | `Options` | every read, Phred+33, default batch bounds |
+| `qc.defaultAdapters()` | `list of string` | the four probe constants |
+| `qc.analyze(path, opts)` | `Report` | one streaming pass; raises `ngs.qc` on qualities outside Phred 0-93 |
+| `qc.meanQuality(rep)` | `float` | mean Phred over sampled bases |
+| `qc.q30Percent(rep)` | `float` | percentage of bases at Q30 or above |
+| `qc.gcPercent(rep)` | `float` | percentage G+C |
+| `qc.meanLength(rep)` | `float` | mean sampled read length |
+| `qc.perBaseMean(rep)` | `list of float` | mean quality per position, empty without `perBase` |
+| `qc.summary(rep)` | `string` | multi-line text report |
 
 ## `trim`
 
-Trimming, filtering and subsampling - the fastp-lite layer.
+Trimming, filtering and subsampling ([Trimming and filtering](preprocessing.md)).
+Errors are `ngs.trim`.
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `trim.Options` | struct | How to trim and filter. |
-| `trim.Stats` | struct | What a run did. |
+| `trim.DEFAULT_WINDOW` | `4` | sliding window width |
+| `trim.DEFAULT_OVERLAP` | `6` | shortest partial 3' adapter match |
 
+### `trim.Options`
 
-### Constants
+The zero value trims nothing; its `maxAmbiguous` of 0 still drops reads
+holding an N.
 
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `trim.DEFAULT_WINDOW` | `int` | `4` | Default sliding window width for quality trimming. |
-| `trim.DEFAULT_OVERLAP` | `int` | `6` | Shortest partial adapter match accepted at a read's 3' end. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `trim.options()` | Default options: adapter clipping on, sliding-window quality trimming at Q20, and reads shorter than 25 bases discarded. |
-| `trim.run(inPath as string, outPath as string, opts as Options)` | Stream a FASTQ file through trimming and filtering into a new file. |
-| `trim.trimRead(rec as fastq.Read, opts as Options)` | Apply every configured trimming step to one record. |
-| `trim.clipFixed(rec as fastq.Read, front as int, tail as int)` | Remove a fixed number of bases from each end. |
-| `trim.clipAdapters(rec as fastq.Read, adapters as list of string, minOverlap as int)` | Clip the read at the first adapter occurrence, including a partial adapter running off the 3' end. |
-| `trim.adapterStart(seq as string, adapters as list of string, minOverlap as int)` | The earliest position at which an adapter starts in a sequence. |
-| `trim.clipQuality(rec as fastq.Read, threshold as int, window as int, offset as int)` | Trim the 3' end where a sliding window's mean quality falls below a threshold. |
-| `trim.qualityKeepLength(qual as string, threshold as int, window as int, offset as int)` | How many bases survive sliding-window quality trimming. |
-| `trim.truncate(rec as fastq.Read, maxLength as int)` | Cap a record's length, keeping the 5' end. |
-| `trim.keeps(rec as fastq.Read, opts as Options)` | Whether a trimmed record passes the configured filters. |
-| `trim.subsampleEvery(inPath as string, outPath as string, everyNth as int, maxReads as int)` | Copy every Nth record of a FASTQ file to a new file. |
-| `trim.subsampleFraction(inPath as string, outPath as string, fraction as float)` | Copy a random fraction of a FASTQ file to a new file. |
+| `trimFront as int` | bases cut from the 5' end |
+| `trimTail as int` | bases cut from the 3' end |
+| `adapters as list of string` | adapters to clip; empty disables |
+| `minOverlap as int` | shortest partial adapter; 0 means `DEFAULT_OVERLAP` |
+| `qualityThreshold as int` | window mean quality to keep; 0 disables |
+| `windowSize as int` | window width; 0 means `DEFAULT_WINDOW` |
+| `maxLength as int` | length cap; 0 is none |
+| `minLength as int` | shorter reads dropped after trimming |
+| `maxAmbiguous as int` | reads with more N bases dropped; -1 disables |
+| `minMeanQuality as int` | reads below this mean dropped; 0 disables |
+| `offset as int` | quality offset; 0 means 33 |
 
+### `trim.Stats`
+
+| field | notes |
+| --- | --- |
+| `readsIn as int` | records read |
+| `readsOut as int` | records written |
+| `basesIn as int` | bases read |
+| `basesOut as int` | bases written |
+| `adapterTrimmed as int` | records shortened by adapter clipping |
+| `qualityTrimmed as int` | records shortened by quality trimming |
+| `tooShort as int` | dropped by `minLength` |
+| `tooAmbiguous as int` | dropped by `maxAmbiguous` |
+| `lowQuality as int` | dropped by `minMeanQuality` |
+
+| function | returns | notes |
+| --- | --- | --- |
+| `trim.options()` | `Options` | built-in adapters, Q20 window of 4, `minLength` 25, `maxAmbiguous` -1 |
+| `trim.run(inPath, outPath, opts)` | `Stats` | streams; raises when input and output are the same file or the compressor fails |
+| `trim.trimRead(rec, opts)` | `fastq.Read` | the four trimming steps on one record |
+| `trim.clipFixed(rec, front, tail)` | `fastq.Read` | empty when the cuts overlap |
+| `trim.clipAdapters(rec, adapters, minOverlap)` | `fastq.Read` | cut at the earliest full or 3' partial adapter |
+| `trim.adapterStart(seq, adapters, minOverlap)` | `int` | 0-based cut position, -1 when none; `minOverlap` below 1 means 6 |
+| `trim.clipQuality(rec, threshold, window, offset)` | `fastq.Read` | cut at the first window below `threshold`; 0 disables |
+| `trim.qualityKeepLength(qual, threshold, window, offset)` | `int` | bases kept from the 5' end |
+| `trim.truncate(rec, maxLength)` | `fastq.Read` | 5' end kept; 0 or less is no cap |
+| `trim.keeps(rec, opts)` | `bool` | passes length, N and mean-quality filters |
+| `trim.subsampleEvery(inPath, outPath, everyNth, maxReads)` | `Stats` | every Nth record; `maxReads` 0 is no limit |
+| `trim.subsampleFraction(inPath, outPath, fraction)` | `Stats` | random, `fraction` in (0, 1]; seed with `math.randSeed` |
 
 ## `pipeline`
 
-Run, skip, check and fan out external tools.
+External tools ([Pipeline orchestration](pipelines.md)). Errors are
+`ngs.pipeline`.
 
+### `pipeline.Job`
 
-### Types
-
-| type | kind | description |
-| --- | --- | --- |
-| `pipeline.Job` | struct | One step of a pipeline. |
-| `pipeline.Result` | struct | What running a job produced. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `pipeline.job(name as string, argv as list of string)` | Build a job from a name and an argv. |
-| `pipeline.shell(name as string, cmdline as string)` | Build a job that runs a shell command line. |
-| `pipeline.needing(j as Job, inputs as list of string)` | A copy of the job that declares the files it reads. |
-| `pipeline.producing(j as Job, outputs as list of string)` | A copy of the job that declares the files it produces. |
-| `pipeline.feeding(j as Job, text as string)` | A copy of the job with text to feed to its standard input. |
-| `pipeline.tolerant(j as Job)` | A copy of the job whose failure is reported but not fatal. |
-| `pipeline.needsRun(j as Job)` | Whether a job still needs to run. |
-| `pipeline.run(j as Job)` | Run one job, skipping it when its outputs are already up to date. |
-| `pipeline.runAll(jobs as list of Job)` | Run jobs one after another, stopping at the first real failure. |
-| `pipeline.runParallel(jobs as list of Job, width as int)` | Run jobs concurrently, at most `width` at a time. |
-| `pipeline.check(res as Result)` | Raise when a result represents a real failure. |
-| `pipeline.checkAll(results as list of Result)` | Raise on the first real failure in a batch of results. |
-| `pipeline.allOk(results as list of Result)` | Whether every result succeeded or was tolerated. |
-| `pipeline.hasTool(name as string)` | Whether an executable is on `PATH`. |
-| `pipeline.requireTools(names as list of string)` | Raise unless every named tool is available. |
-| `pipeline.workDir(tag as string)` | A scratch directory that the caller is responsible for removing. |
-| `pipeline.cleanUp(dir as string)` | Remove a directory and everything under it. |
-| `pipeline.summary(results as list of Result)` | Render results as one status line per job. |
+| `name as string` | label in logs and results |
+| `argv as list of string` | command and arguments, run without a shell |
+| `inputs as list of string` | files read |
+| `outputs as list of string` | files produced |
+| `stdin as string` | text fed to standard input |
+| `allowFailure as bool` | a non-zero exit is reported, not raised |
 
+### `pipeline.Result`
+
+| field | notes |
+| --- | --- |
+| `name as string` | the job's label |
+| `exitCode as int` | process exit code, 0 when skipped |
+| `stdout as string` | captured standard output |
+| `stderr as string` | captured standard error |
+| `skipped as bool` | the job was up to date |
+| `allowFailure as bool` | copied from the job |
+
+| function | returns | notes |
+| --- | --- | --- |
+| `pipeline.job(name, argv)` | `Job` | raises on an empty argv |
+| `pipeline.shell(name, cmdline)` | `Job` | runs `sh -c cmdline`; quote untrusted values with `core.shellQuote` |
+| `pipeline.needing(j, inputs)` | `Job` | copy with `inputs` set |
+| `pipeline.producing(j, outputs)` | `Job` | copy with `outputs` set |
+| `pipeline.feeding(j, text)` | `Job` | copy with `stdin` set |
+| `pipeline.tolerant(j)` | `Job` | copy with `allowFailure` set |
+| `pipeline.needsRun(j)` | `bool` | true without outputs, with an output missing, or with an input not older than the oldest output; raises on a missing input |
+| `pipeline.run(j)` | `Result` | skips an up-to-date job; raises without `exec` |
+| `pipeline.runAll(jobs)` | `list of Result` | in order; raises at the first real failure |
+| `pipeline.runParallel(jobs, width)` | `list of Result` | waves of `width` (0 or less: `os.NCPU`), input order; does not check |
+| `pipeline.check(res)` | - | raises on a non-zero exit without `allowFailure` |
+| `pipeline.checkAll(results)` | - | `check` on each, raising at the first failure |
+| `pipeline.allOk(results)` | `bool` | no real failure |
+| `pipeline.hasTool(name)` | `bool` | `core.hasTool` |
+| `pipeline.requireTools(names)` | - | raises listing every missing tool |
+| `pipeline.workDir(tag)` | `string` | fresh temp directory; the caller removes it |
+| `pipeline.cleanUp(dir)` | - | recursive delete; raises for a root, the working directory, `.` or `..` |
+| `pipeline.summary(results)` | `string` | one `skip` / `ok` / `warn` / `fail` line per job |
 
 ## `ngs`
 
-The deck entry module: identity and host capabilities.
+The entry module. Errors are `ngs.ngs`.
 
-
-### Types
-
-| type | kind | description |
+| constant | value | notes |
 | --- | --- | --- |
-| `ngs.Capabilities` | struct | What this host can and cannot do with the deck. |
+| `ngs.VERSION` | `"0.1.0"` | the deck's version |
+| `ngs.NAME` | `"@deckyard/ngs"` | the package name |
 
+### `ngs.Capabilities`
 
-### Constants
-
-| constant | type | value | description |
-| --- | --- | --- | --- |
-| `ngs.VERSION` | `string` | `"0.1.0"` | The deck's version. |
-| `ngs.NAME` | `string` | `"@jennifer/ngs"` | The deck's canonical package name. |
-
-
-### Functions
-
-| function | description |
+| field | notes |
 | --- | --- |
-| `ngs.capabilities()` | What the current interpreter and host support. |
-| `ngs.describe()` | A one-line description of the deck and what this host supports. |
-| `ngs.requireFullHost()` | Raise unless the host can stream gzip and drive external tools. |
+| `streamingGzip as bool` | the host has `exec`, which streaming gzip needs (`gzipOnPath` is not consulted); false means `source.openGzipBuffered` |
+| `externalTools as bool` | `pipeline` can run programs |
+| `gzipOnPath as bool` | a `gzip` executable is on `PATH` |
 
-
----
-
-244 exported names across 12 modules.
+| function | returns | notes |
+| --- | --- | --- |
+| `ngs.capabilities()` | `Capabilities` | what this interpreter and host support |
+| `ngs.describe()` | `string` | name, version and capabilities on one line |
+| `ngs.requireFullHost()` | - | raises without the `exec` capability |

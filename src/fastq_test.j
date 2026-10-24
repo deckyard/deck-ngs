@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 /**
  * White-box tests for the FASTQ reader.
@@ -83,4 +83,46 @@ func testSubseqAndRevComp() {
     def rc as Read init reverseComplement($rec);
     testing.assertEqual($rc.seq, "TACGT");
     testing.assertEqual($rc.qual, "54321");
+}
+
+# New fixtures live inside the checkout, under the git-ignored .ci-fixtures/:
+# in CI the interpreter runs in a container that mounts only the workspace.
+func fixtureDir() {
+    fs.mkdirAll(".ci-fixtures");
+    return fs.makeTempDir(".ci-fixtures", "ngsfastq");
+}
+
+func testWriteRoundTrips() {
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def p as string init $dir + "/out.fastq";
+    def k as source.Sink init source.createPlain($p);
+    write($k, parse("@r1 lane 1", "ACGT", "+", "II#I"));
+    write($k, parse("@r2", "GG", "+r2", "!!"));
+    testing.assertEqual(source.closeSink($k), 0);
+    # The separator is always written bare, whatever the input carried.
+    testing.assertEqual(fs.readString($p), "@r1 lane 1\nACGT\n+\nII#I\n@r2\nGG\n+\n!!\n");
+    def r as Reader init open($p);
+    def first as Read init next($r);
+    def second as Read init next($r);
+    testing.assertEqual(hasNext($r), false);
+    closeStrict($r);
+    testing.assertEqual($first.id, "r1");
+    testing.assertEqual($first.desc, "lane 1");
+    testing.assertEqual($second.qual, "!!");
+}
+
+func testOpenStdinWrapsTheStdinSource() {
+    # Opened and closed without reading: the test runner's stdin is not ours.
+    # A stdin that cannot be reopened (a socket gives ENXIO) leaves nothing to
+    # check here.
+    def r as Reader;
+    try {
+        $r = openStdin();
+    } catch (e) {
+        return;
+    }
+    testing.assertEqual($r.src.origin, "<stdin>");
+    testing.assertEqual($r.src.piped, false);
+    testing.assertEqual(close($r), 0);
 }

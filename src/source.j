@@ -1,24 +1,21 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
- * Streaming line sources and sinks for large NGS files.
- *
- * The deck's rule is that a 50 GB FASTQ never lands in memory, so every reader
- * in this deck pulls one line at a time from a `Source` and every writer pushes
- * one line at a time into a `Sink`.
+ * Streaming line sources and sinks. Every reader in the deck pulls one line
+ * at a time from a `Source` and every writer pushes one line at a time into a
+ * `Sink`, so a 50 GB FASTQ never lands in memory.
  *
  * Plain files stream through an `fs.File` handle. Gzipped files stream through
- * an external `gzip` process whose output is redirected into a FIFO that this
- * module opens as an ordinary read handle - `compress` offers a streaming
- * *compressor* but no streaming *decompressor*, so a pure-Jennifer gzip reader
- * would have to hold the whole decompressed file at once. The FIFO route keeps
- * memory flat at one line regardless of file size, at the cost of needing the
- * `exec` capability (the default `jennifer` binary) and a Unix host.
+ * an external `gzip` whose output goes into a FIFO opened as an ordinary read
+ * handle: `compress` has a streaming compressor but no streaming
+ * decompressor. Memory stays at one line whatever the file size; the cost is
+ * the `exec` capability (the default `jennifer` binary), a Unix host, and
+ * `gzip` and `mkfifo` on `PATH`.
  *
- * `openGzipBuffered` is the fallback for hosts without `exec`: correct, but it
- * holds the decompressed file in memory, so it is for small inputs only.
+ * `openGzipBuffered` is the fallback for hosts without `exec`. It holds the
+ * decompressed file in memory, so use it for small inputs only.
  *
  * @module source
  * @since 0.1.0
@@ -39,15 +36,14 @@ export def const GZIP_MAGIC1 as int init 0x1f;
 export def const GZIP_MAGIC2 as int init 0x8b;
 
 /**
- * An open line source. Treat it as an opaque handle and pass it around by value:
- * the `fs.File` and `os.Process` fields are registry handles, so copies share
- * the same underlying stream.
+ * An open line source. Treat it as an opaque handle: the `fs.File` and
+ * `os.Process` fields are registry handles, so copies share one stream.
  *
- * @field file {fs.File} the readable handle lines are pulled from
- * @field proc {os.Process} the decompressor child, when `piped` is true
- * @field helper {string} private directory or temp file to remove on close
+ * @field file {fs.File} readable handle lines are pulled from
+ * @field proc {os.Process} decompressor child, when `piped` is true
+ * @field helper {string} private directory or temp file removed on close, "" when none
  * @field piped {bool} whether a child process feeds this source
- * @field origin {string} the path this source was opened from, for messages
+ * @field origin {string} path opened, or "<stdin>", for messages
  */
 export def struct Source {
     file as fs.File,
@@ -58,13 +54,13 @@ export def struct Source {
 };
 
 /**
- * An open line sink, the write-side counterpart of `Source`.
+ * An open line sink, the write side of `Source`.
  *
- * @field file {fs.File} the writable handle lines are pushed into
- * @field proc {os.Process} the compressor child, when `piped` is true
- * @field helper {string} private directory to remove on close, "" when none
+ * @field file {fs.File} writable handle lines are pushed into
+ * @field proc {os.Process} compressor child, when `piped` is true
+ * @field helper {string} private directory removed on close, "" when none
  * @field piped {bool} whether a child process drains this sink
- * @field origin {string} the path this sink was opened for, for messages
+ * @field origin {string} path written, for messages
  */
 export def struct Sink {
     file as fs.File,
@@ -77,12 +73,12 @@ export def struct Sink {
 /**
  * Whether a file starts with the gzip magic number.
  *
- * Sniffs the content rather than trusting the extension, so a gzipped `.fq`
- * and a plain `.gz` are both handled correctly.
+ * Sniffs the content, not the extension, so a gzipped `.fq` and a plain `.gz`
+ * are both read correctly.
  *
  * @param path {string} file to inspect
  * @return {bool} true when the first two bytes are 1f 8b
- * @throws {Error} when the file cannot be opened
+ * @throws {Error} kind "ngs.source" when the file does not exist
  */
 export func isGzip(path as string) {
     if (not fs.exists($path)) {
@@ -101,8 +97,9 @@ export func isGzip(path as string) {
  * Open a file for streaming line reads, decompressing gzip transparently.
  *
  * @param path {string} file to read
- * @return {Source} an open source; close it with `close`
- * @throws {Error} when the file is missing, or gzipped without `exec` available
+ * @return {Source} an open source; close it with `close` or `closeStrict`
+ * @throws {Error} kind "ngs.source" when the file is missing, or is gzipped and
+ *   the host lacks `exec` or `mkfifo` fails
  */
 export func open(path as string) {
     if (isGzip($path)) {
@@ -116,7 +113,7 @@ export func open(path as string) {
  *
  * @param path {string} file to read
  * @return {Source} an open source
- * @throws {Error} when the file is missing
+ * @throws {Error} kind "ngs.source" when the file is missing
  */
 export func openPlain(path as string) {
     if (not fs.exists($path)) {
@@ -128,12 +125,14 @@ export func openPlain(path as string) {
 }
 
 /**
- * Open standard input as a line source, so the deck composes with Unix pipes.
+ * Open standard input as a line source, for Unix pipes.
  *
- * Uses `/dev/stdin`, so it is Unix-only.
+ * Reopens `/dev/stdin`, so it is Unix-only, and only works when stdin can be
+ * reopened: a pipe, a file or a terminal, not a socket.
  *
- * @return {Source} an open source reading the process's stdin
- * @throws {Error} when /dev/stdin is not available
+ * @return {Source} an open source over the process's stdin, `origin` "<stdin>"
+ * @throws {Error} kind "ngs.source" when `/dev/stdin` does not exist; kind
+ *   "runtime" when it exists but cannot be opened (a socket gives ENXIO)
  */
 export func openStdin() {
     if (not fs.exists("/dev/stdin")) {
@@ -147,13 +146,14 @@ export func openStdin() {
 /**
  * Open a gzipped file for streaming line reads at constant memory.
  *
- * Spawns `gzip -dc` with its stdout redirected into a private FIFO, then reads
- * the FIFO as a normal line handle. Memory stays flat no matter how large the
- * file is.
+ * Spawns `sh -c 'exec gzip -dc -- <path> > <fifo>'` with the FIFO in a private
+ * directory, then reads the FIFO as a normal line handle. The path is
+ * shell-quoted. `close` returns gzip's exit code.
  *
  * @param path {string} gzipped file to read
  * @return {Source} an open source
- * @throws {Error} without the `exec` capability, or when `mkfifo` fails
+ * @throws {Error} kind "ngs.source" when the file is missing, without the `exec`
+ *   capability, or when `mkfifo` fails
  */
 export func openGzip(path as string) {
     if (not fs.exists($path)) {
@@ -179,12 +179,14 @@ export func openGzip(path as string) {
 /**
  * Open a gzipped file by decompressing it whole, for hosts without `exec`.
  *
- * Holds the entire decompressed file in memory and then on disk as a temp file,
- * so use it only for small inputs; `openGzip` is the streaming path.
+ * Holds the whole decompressed file in memory, then writes it to a temp file
+ * that `close` removes. For small inputs only: a small crafted `.gz` can
+ * expand to gigabytes. `openGzip` is the streaming path.
  *
  * @param path {string} gzipped file to read
  * @return {Source} an open source over a temporary decompressed copy
- * @throws {Error} when the file is missing or not valid gzip
+ * @throws {Error} kind "ngs.source" when the file is missing; the `compress`
+ *   error when it is not valid gzip
  */
 export func openGzipBuffered(path as string) {
     if (not fs.exists($path)) {
@@ -201,7 +203,7 @@ export func openGzipBuffered(path as string) {
 }
 
 /**
- * Whether another line can be read from the source.
+ * Whether another line can be read.
  *
  * @param s {Source} an open source
  * @return {bool} false once the stream is exhausted
@@ -215,7 +217,7 @@ export func hasNext(s as Source) {
  *
  * @param s {Source} an open source
  * @return {string} the next line
- * @throws {Error} when the source is already exhausted; guard with `hasNext`
+ * @throws {Error} kind "runtime" when the source is exhausted; guard with `hasNext`
  */
 export func nextLine(s as Source) {
     return fs.readLine($s.file);
@@ -224,15 +226,14 @@ export func nextLine(s as Source) {
 /**
  * Close a source and release its child process and temporary files.
  *
- * Returns the decompressor's exit code so a truncated or corrupt `.gz` can be
- * detected. Note that abandoning a stream early makes the decompressor die of
- * `SIGPIPE`, which is a non-zero code you should ignore; use `closeStrict` only
- * when the stream was consumed to the end.
+ * Returns the decompressor's exit code, so a truncated or corrupt `.gz` can be
+ * detected. A stream abandoned early kills the decompressor with `SIGPIPE`, a
+ * non-zero code to ignore; use `closeStrict` only on a stream read to the end.
  *
  * @param s {Source} the source to close
- * @return {int} the child's exit code, or 0 when no child was involved
- * @throws {Error} kind `ngs.source` when the handle could not be closed - after
- *   the child and temporary files have been released regardless
+ * @return {int} the child's exit code, 0 when there is no child
+ * @throws {Error} kind "ngs.source" when the handle could not be closed (closed
+ *   twice, say); the child and temporary files are released first
  */
 export func close(s as Source) {
     # Release everything before reporting a failed handle close. Letting the
@@ -262,7 +263,8 @@ export func close(s as Source) {
  * Close a fully-consumed source, raising if its decompressor failed.
  *
  * @param s {Source} the source to close, already read to exhaustion
- * @throws {Error} when the decompressor exited non-zero (truncated/corrupt input)
+ * @throws {Error} kind "ngs.source" when the decompressor exited non-zero
+ *   (truncated or corrupt input) or the handle could not be closed
  */
 export func closeStrict(s as Source) {
     def code as int init close($s);
@@ -279,7 +281,9 @@ export func closeStrict(s as Source) {
  *
  * @param path {string} file to create or overwrite
  * @return {Sink} an open sink; close it with `closeSink`
- * @throws {Error} for a `.gz` target without the `exec` capability
+ * @throws {Error} kind "ngs.source" for a `.gz` target without the `exec`
+ *   capability or when `mkfifo` fails; kind "runtime" when the file cannot be
+ *   created
  */
 export func create(path as string) {
     if (strings.endsWith($path, ".gz")) {
@@ -293,6 +297,7 @@ export func create(path as string) {
  *
  * @param path {string} file to create or overwrite
  * @return {Sink} an open sink
+ * @throws {Error} kind "runtime" when the file cannot be created
  */
 export func createPlain(path as string) {
     def f as fs.File init fs.open($path, "write");
@@ -303,12 +308,13 @@ export func createPlain(path as string) {
 /**
  * Open a gzip-compressed file for streaming line writes at constant memory.
  *
- * Mirrors `openGzip`: lines are written into a FIFO that an external `gzip`
- * process compresses into the target file.
+ * Mirrors `openGzip`: lines go into a FIFO that an external `gzip -c`
+ * compresses into the target. `closeSink` returns gzip's exit code.
  *
  * @param path {string} `.gz` file to create or overwrite
  * @return {Sink} an open sink
- * @throws {Error} without the `exec` capability, or when `mkfifo` fails
+ * @throws {Error} kind "ngs.source" without the `exec` capability, or when
+ *   `mkfifo` fails
  */
 export func createGzip(path as string) {
     if (not meta.hasCapability("exec")) {
@@ -328,7 +334,7 @@ export func createGzip(path as string) {
 }
 
 /**
- * Write text to a sink verbatim, adding no line terminator.
+ * Write text to a sink verbatim, with no line terminator added.
  *
  * @param k {Sink} an open sink
  * @param text {string} text to write
@@ -348,10 +354,14 @@ export func writeLine(k as Sink, line as string) {
 }
 
 /**
- * Close a sink, flush it and wait for its compressor to finish.
+ * Flush and close a sink, then wait for its compressor to finish.
+ *
+ * Check the return value: non-zero means the `.gz` output is incomplete.
  *
  * @param k {Sink} the sink to close
- * @return {int} the child's exit code, or 0 when no child was involved
+ * @return {int} the child's exit code, 0 when there is no child
+ * @throws {Error} kind "ngs.source" when the handle could not be closed; the
+ *   child and private directory are released first
  */
 export func closeSink(k as Sink) {
     # Same ordering as `close`: drain and clean up first, report afterwards.
@@ -375,17 +385,18 @@ export func closeSink(k as Sink) {
 }
 
 /**
- * Create a private directory holding a fresh FIFO, and return the directory.
+ * Create a private directory holding a fresh FIFO named `pipe`.
  *
- * The FIFO lives inside a `0700` directory rather than directly in the shared
- * temp directory. Putting it in `/tmp` would mean reserving a name, deleting it,
- * then calling `mkfifo` on it - a window in which another local user could take
- * the path and hand us a pipe they control. Only the owner can create an entry
+ * The FIFO lives inside a `0700` directory, not directly in the shared temp
+ * directory. In `/tmp` it would take reserving a name, deleting it, then
+ * calling `mkfifo` on it - a window in which another local user could take the
+ * path and hand us a pipe they control. Only the owner can create an entry
  * inside a `0700` directory, so that race does not exist.
  *
- * @param tag {string} prefix used in the directory name, for debuggability
- * @return {string} path to a private directory containing `pipe`
- * @throws {Error} when the directory or the FIFO cannot be created
+ * @param tag {string} directory name prefix
+ * @return {string} path of the private directory
+ * @throws {Error} kind "ngs.source" when `mkfifo` fails; the `fs` error when the
+ *   directory cannot be created
  */
 func makeFifoDir(tag as string) {
     def dir as string init fs.makeTempDir("", $tag);
@@ -400,8 +411,8 @@ func makeFifoDir(tag as string) {
 /**
  * The FIFO inside a directory made by `makeFifoDir`.
  *
- * @param dir {string} the private directory
- * @return {string} path to its FIFO
+ * @param dir {string} private directory
+ * @return {string} path of its FIFO
  */
 func fifoIn(dir as string) {
     return path.join($dir, "pipe");
@@ -426,11 +437,11 @@ func discard(target as string) {
 /**
  * Stop a decompressor and drop its handle, on a path that is already failing.
  *
- * Every step is best-effort: this runs from an `errdefer` while another error is
+ * Best-effort throughout: it runs from an `errdefer` while another error is
  * propagating, and must not replace it with one of its own.
  *
- * @param child {os.Process} the process to stop
- * @return {int} the child's exit code, or -1 when it could not be reaped
+ * @param child {os.Process} process to stop
+ * @return {int} the child's exit code, -1 when it could not be reaped
  */
 func reap(child as os.Process) {
     try {

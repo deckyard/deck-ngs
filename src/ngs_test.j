@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 /**
  * White-box tests for the deck's entry module.
@@ -9,7 +9,7 @@ use testing;
 use strings;
 
 func testIdentityMatchesTheManifest() {
-    testing.assertEqual(NAME, "@jennifer/ngs");
+    testing.assertEqual(NAME, "@deckyard/ngs");
     testing.assertEqual(VERSION, "0.1.0");
 }
 
@@ -27,4 +27,12 @@ func testDescribeNamesTheDeckAndVersion() {
     def text as string init describe();
     testing.assertEqual(strings.contains($text, NAME), true);
     testing.assertEqual(strings.contains($text, VERSION), true);
+}
+
+func testRequireFullHostMatchesCapabilities() {
+    if (capabilities().externalTools) {
+        requireFullHost();
+        return;
+    }
+    testing.assertThrows("requireFullHost", "ngs.ngs");
 }

@@ -1,19 +1,17 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
  * Streaming GFF3 and GTF reading and writing.
  *
- * GFF and GTF share nine tab-delimited columns and differ only in how the
- * ninth encodes attributes: GFF3 writes `key=value;key=value` with
- * percent-escaping, GTF writes `key "value"; key "value";`. `parse` detects the
- * style per record, so a mixed directory needs no flag.
+ * GFF3 and GTF share nine tab-delimited columns and differ in the ninth:
+ * GFF3 writes `key=value;key=value` with percent-escaping, GTF writes
+ * `key "value"; key "value";`. `parse` detects the style per record.
  *
- * **Coordinates.** GFF and GTF are 1-based and inclusive; BED and the interval
- * engine are 0-based and half-open. `toInterval` converts, and is the only
- * correct way to move a feature into `intervals` - subtracting one by hand at
- * call sites is how off-by-one bugs get into annotation pipelines.
+ * **Coordinates.** `Feature` keeps the file's 1-based inclusive coordinates.
+ * `toInterval` converts to the 0-based half-open convention of `intervals`;
+ * use it rather than subtracting one by hand.
  *
  * @module gff
  * @since 0.1.0
@@ -26,7 +24,7 @@ import "./core.j" as core;
 import "./source.j" as source;
 import "./intervals.j" as intervals;
 
-/** Placeholder used for an absent column. */
+/** Placeholder for an absent column. */
 export def const MISSING as string init ".";
 
 /** Attribute style: `key=value;` pairs, percent-escaped. */
@@ -39,14 +37,14 @@ export def const STYLE_GTF as string init "gtf";
  * One GFF3 or GTF feature.
  *
  * @field seqid {string} reference sequence name
- * @field origin {string} the `source` column: what produced the feature
- * @field kind {string} the `type` column: gene, exon, CDS, ...
- * @field start {int} 1-based inclusive start, as written in the file
- * @field end {int} 1-based inclusive end, as written in the file
+ * @field origin {string} `source` column: what produced the feature
+ * @field kind {string} `type` column: gene, exon, CDS, ...
+ * @field start {int} 1-based inclusive start
+ * @field end {int} 1-based inclusive end
  * @field score {float} feature score, 0.0 when absent
  * @field strand {string} "+", "-" or "."
- * @field phase {int} CDS reading frame 0-2, or -1 when absent
- * @field attributes {map of string to string} the parsed ninth column
+ * @field phase {int} CDS phase 0-2, -1 when absent
+ * @field attributes {map of string to string} parsed ninth column, in file order
  */
 export def struct Feature {
     seqid as string,
@@ -63,7 +61,7 @@ export def struct Feature {
 /**
  * A streaming GFF/GTF cursor.
  *
- * @field src {source.Source} the underlying line source
+ * @field src {source.Source} underlying line source
  */
 export def struct Reader {
     src as source.Source
@@ -72,8 +70,8 @@ export def struct Reader {
 /**
  * The result of advancing a GFF cursor.
  *
- * @field Record {Feature} the next parsed feature, in `value`
- * @field Done {none} the stream is exhausted
+ * @field Record {Feature} next feature, in `value`
+ * @field Done {none} end of stream
  */
 export def enum Next {
     Record{value as Feature},
@@ -85,14 +83,15 @@ export def enum Next {
  *
  * @param path {string} `.gff`, `.gff3`, `.gtf` or gzipped equivalent
  * @return {Reader} an open cursor
- * @throws {Error} when the file is missing
+ * @throws {Error} kind "ngs.source" when the file is missing
  */
 export func open(path as string) {
     return Reader{src: source.open($path)};
 }
 
 /**
- * Open standard input as a GFF/GTF stream.
+ * Open standard input as a GFF/GTF stream. See `source.openStdin` for when
+ * that fails.
  *
  * @return {Reader} an open cursor over stdin
  */
@@ -103,12 +102,12 @@ export func openStdin() {
 /**
  * Advance the cursor to the next feature.
  *
- * Skips blank lines and `#` directives, and stops at the `##FASTA` section that
- * may end a GFF3 file.
+ * Skips blank lines and `#` lines, and stops at a `##FASTA` section.
  *
  * @param r {Reader} an open cursor
- * @return {Next} `Record` with the feature, or `Done` at end of stream
- * @throws {Error} on a record with fewer than nine columns
+ * @return {Next} `Record` with the feature, or `Done` at end of stream or
+ *   `##FASTA`
+ * @throws {Error} as `parse`
  */
 export func next(r as Reader) {
     while (source.hasNext($r.src)) {
@@ -124,9 +123,9 @@ export func next(r as Reader) {
 }
 
 /**
- * Close the cursor and release its decompressor.
+ * Close the cursor and release its decompressor. See `source.close`.
  *
- * @param r {Reader} the cursor to close
+ * @param r {Reader} cursor to close
  * @return {int} the decompressor's exit code, 0 when uncompressed
  */
 export func close(r as Reader) {
@@ -136,8 +135,8 @@ export func close(r as Reader) {
 /**
  * Close a fully-consumed cursor, raising if its decompressor failed.
  *
- * @param r {Reader} the cursor to close
- * @throws {Error} on a truncated or corrupt gzip stream
+ * @param r {Reader} cursor to close, already read to exhaustion
+ * @throws {Error} kind "ngs.source" on a truncated or corrupt gzip stream
  */
 export func closeStrict(r as Reader) {
     source.closeStrict($r.src);
@@ -148,7 +147,8 @@ export func closeStrict(r as Reader) {
  *
  * @param line {string} one nine-column record, newline already stripped
  * @return {Feature} the parsed feature, coordinates left 1-based
- * @throws {Error} when fewer than nine columns are present
+ * @throws {Error} kind "ngs.gff" on fewer than nine columns or a non-numeric
+ *   start, end, score or phase
  */
 export func parse(line as string) {
     try {
@@ -159,12 +159,12 @@ export func parse(line as string) {
 }
 
 /**
- * Parse a GFF/GTF record, assuming the caller has wrapped it for error
- * reporting.
+ * Parse a GFF/GTF record; the caller wraps it for error reporting.
  *
  * @param line {string} one nine-column record, newline already stripped
  * @return {Feature} the parsed feature, coordinates left 1-based
- * @throws {Error} when fewer than nine columns are present
+ * @throws {Error} kind "ngs.gff" on fewer than nine columns; unwrapped
+ *   conversion errors otherwise
  */
 func parseRow(line as string) {
     def f as list of string init core.splitTab($line);
@@ -196,12 +196,11 @@ func parseRow(line as string) {
 /**
  * Parse a ninth-column attribute string in either GFF3 or GTF style.
  *
- * The style is detected from the first pair: `key=value` is GFF3, `key "value"`
- * is GTF. GFF3 values are percent-decoded. A column that is empty or the
- * undefined-field marker `.` yields no attributes rather than one oddly-named
- * attribute.
+ * The style comes from `styleOf`. GFF3 values are percent-decoded (left as
+ * is when the encoding is invalid); a GFF3 entry without `=` maps to "". An
+ * empty or "." column yields no attributes.
  *
- * @param text {string} the raw ninth column
+ * @param text {string} raw ninth column
  * @return {map of string to string} attribute keys to values, in file order
  */
 export func parseAttributes(text as string) {
@@ -229,9 +228,11 @@ export func parseAttributes(text as string) {
 }
 
 /**
- * Which attribute style a ninth column uses.
+ * Which attribute style a ninth column uses, judged from its first entry: an
+ * `=` before any quote is GFF3; a quote, or `key value` with no `=` (GENCODE's
+ * `level 2`), is GTF; anything else is GFF3.
  *
- * @param text {string} the raw ninth column
+ * @param text {string} raw ninth column
  * @return {string} `STYLE_GFF3` or `STYLE_GTF`
  */
 export func styleOf(text as string) {
@@ -260,8 +261,8 @@ export func styleOf(text as string) {
  *
  * @param f {Feature} the feature
  * @param key {string} attribute name
- * @param fallback {string} value to return when the key is missing
- * @return {string}
+ * @param fallback {string} value for a missing key
+ * @return {string} the attribute value, or `fallback`
  */
 export func attribute(f as Feature, key as string, fallback as string) {
     if (not maps.has($f.attributes, $key)) {
@@ -307,25 +308,27 @@ export func name(f as Feature) {
 }
 
 /**
- * Convert a feature to a half-open interval for the interval engine.
- *
- * This is where the 1-based inclusive GFF coordinate becomes the 0-based
- * half-open BED coordinate: `start - 1` and `end` unchanged.
+ * Convert a feature to a 0-based half-open interval: `start - 1`, `end`
+ * unchanged.
  *
  * @param f {Feature} the feature
- * @return {Interval} the equivalent 0-based half-open interval, named by `name`
+ * @return {Interval} the interval, named by `name`, with score and strand
+ * @throws {Error} kind "ngs.intervals" when the coordinates are inverted or
+ *   start is below 1
  */
 export func toInterval(f as Feature) {
     return intervals.named($f.seqid, $f.start - 1, $f.end, name($f), $f.score, $f.strand);
 }
 
 /**
- * Build a feature from a half-open interval, converting back to 1-based.
+ * Build a feature from a 0-based half-open interval: `start + 1`, `end`
+ * unchanged.
  *
- * @param iv {Interval} a 0-based half-open interval
- * @param origin {string} value for the `source` column
- * @param kind {string} value for the `type` column
- * @return {Feature} the feature, with `ID` set from the interval's name
+ * @param iv {Interval} the interval
+ * @param origin {string} `source` column
+ * @param kind {string} `type` column
+ * @return {Feature} the feature, phase -1, `ID` set from the interval's name
+ *   when it has one
  */
 export func fromInterval(iv as intervals.Interval, origin as string, kind as string) {
     def attrs as map of string to string init {};
@@ -346,7 +349,8 @@ export func fromInterval(iv as intervals.Interval, origin as string, kind as str
 }
 
 /**
- * Render a feature as a nine-column record.
+ * Render a feature as a nine-column record. A score of 0.0 and a phase of -1
+ * are written ".".
  *
  * @param f {Feature} the feature
  * @param style {string} `STYLE_GFF3` or `STYLE_GTF`
@@ -376,11 +380,12 @@ export func format(f as Feature, style as string) {
 }
 
 /**
- * Render an attribute map in GFF3 or GTF style.
+ * Render an attribute map in GFF3 style (percent-escaped, see
+ * `percentEncode`) or GTF style (quoted, not escaped).
  *
  * @param attrs {map of string to string} attributes in output order
  * @param style {string} `STYLE_GFF3` or `STYLE_GTF`
- * @return {string} the ninth column, or "." when there are no attributes
+ * @return {string} the ninth column, "." when there are no attributes
  */
 export func formatAttributes(attrs as map of string to string, style as string) {
     def parts as list of string init [];
@@ -403,11 +408,15 @@ export func formatAttributes(attrs as map of string to string, style as string) 
 }
 
 /**
- * Read a whole annotation file into memory.
+ * Read a whole annotation file into memory, up to any `##FASTA` section.
+ *
+ * Closes with `close`, not `closeStrict`, so a truncated gzip input is not
+ * reported.
  *
  * @param path {string} GFF3/GTF file, optionally gzipped
  * @return {list of Feature} every feature, in file order
- * @throws {Error} when the file is missing or a record is malformed
+ * @throws {Error} kind "ngs.source" when the file is missing; as `parse` on a
+ *   malformed record
  */
 export func readAll(path as string) {
     def r as Reader init open($path);
@@ -429,11 +438,13 @@ export func readAll(path as string) {
 }
 
 /**
- * Read an annotation file directly as half-open intervals.
+ * Read an annotation file as 0-based half-open intervals, via `readAll` and
+ * `toInterval`.
  *
  * @param path {string} GFF3/GTF file, optionally gzipped
- * @param kind {string} keep only this feature type, or "" for all types
+ * @param kind {string} feature type to keep, "" for all
  * @return {list of Interval} converted features, in file order
+ * @throws {Error} as `readAll` and `toInterval`
  */
 export func readIntervals(path as string, kind as string) {
     def out as list of intervals.Interval init [];
@@ -448,8 +459,8 @@ export func readIntervals(path as string, kind as string) {
 /**
  * Parse GTF-style `key "value";` attributes.
  *
- * @param text {string} the raw ninth column
- * @return {map of string to string}
+ * @param text {string} raw ninth column
+ * @return {map of string to string} keys to unquoted values, in file order
  */
 func parseGtfAttributes(text as string) {
     def out as map of string to string init {};
@@ -472,7 +483,7 @@ func parseGtfAttributes(text as string) {
 /**
  * Strip surrounding double quotes from a GTF attribute value.
  *
- * @param s {string} the raw value
+ * @param s {string} raw value
  * @return {string} the value without its quotes
  */
 func unquote(s as string) {
@@ -485,9 +496,8 @@ func unquote(s as string) {
 /**
  * Percent-decode a GFF3 attribute value.
  *
- * @param s {string} the raw value
- * @return {string} the decoded value, or the input unchanged when it is not
- *   valid percent-encoding
+ * @param s {string} raw value
+ * @return {string} the decoded value, or `s` unchanged when the encoding is invalid
  */
 func percentDecode(s as string) {
     if (strings.indexOf($s, "%") < 0) {
@@ -503,13 +513,12 @@ func percentDecode(s as string) {
 /**
  * Percent-encode the characters GFF3 reserves in an attribute value.
  *
- * Only the reserved set is escaped (`%` first, so it is not double-escaped):
- * tab, newline, carriage return and `%` per the GFF3 spec's global rule, plus
- * `;`, `=`, `&` and `,` which are reserved in column 9. The spec says "no other
- * characters may be encoded", so spaces are deliberately left alone - GFF3
- * allows them unescaped in attribute values, and encoding them would be wrong.
+ * Escapes only the reserved set, `%` first so it is not double-escaped: tab,
+ * newline, carriage return and `%` (the GFF3 spec's global rule), plus `;`,
+ * `=`, `&` and `,` (reserved in column 9). The spec says "no other characters
+ * may be encoded", so spaces stay unescaped.
  *
- * @param s {string} the value to escape
+ * @param s {string} value to escape
  * @return {string} the escaped value
  */
 func percentEncode(s as string) {
@@ -524,12 +533,10 @@ func percentEncode(s as string) {
 }
 
 /**
- * Close a cursor on a path that is already failing.
+ * Close a cursor on a path that is already failing, without raising.
  *
- * Cleanup that runs while an error is propagating must not raise one of its own.
- *
- * @param r {Reader} the cursor to close
- * @return {int} the close result, or -1 when closing itself failed
+ * @param r {Reader} cursor to close
+ * @return {int} the close result, -1 when closing itself failed
  */
 func quietClose(r as Reader) {
     try {

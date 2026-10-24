@@ -1,17 +1,14 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
- * Streaming BED reading and writing.
+ * Streaming BED reading and writing. BED and `intervals.Interval` are both
+ * 0-based half-open, so a record parses straight into an interval.
  *
- * BED records map directly onto `intervals.Interval` (both are 0-based,
- * half-open), so a parsed feature drops straight into the interval engine.
- *
- * Because `track`, `browser` and `#` lines may sit between records, the cursor
- * reports end-of-stream through a `Next` enum rather than a `hasNext` peek -
- * skipping a comment can consume the last line of the file, which a peek-based
- * cursor cannot express:
+ * `track`, `browser` and `#` lines may sit between records, and skipping one
+ * can consume the last line of the file, which a `hasNext` peek cannot
+ * express. The cursor returns a `Next` enum instead:
  *
  * ```jennifer
  * def r as bed.Reader init bed.open("peaks.bed");
@@ -26,8 +23,7 @@
  * bed.closeStrict($r);
  * ```
  *
- * For feature sets that comfortably fit in memory - the usual bedtools case -
- * `readAll` is the one-line alternative.
+ * `readAll` loads a whole file, for feature sets that fit in memory.
  *
  * @module bed
  * @since 0.1.0
@@ -38,23 +34,23 @@ import "./core.j" as core;
 import "./source.j" as source;
 import "./intervals.j" as intervals;
 
-/** Placeholder written for an absent name or strand. */
+/** Placeholder read and written for an absent name, score or strand. */
 export def const MISSING as string init ".";
 
 /**
  * A streaming BED cursor.
  *
- * @field src {source.Source} the underlying line source
+ * @field src {source.Source} underlying line source
  */
 export def struct Reader {
     src as source.Source
 };
 
 /**
- * The result of advancing a BED cursor: either a feature or end-of-stream.
+ * The result of advancing a BED cursor.
  *
- * @field Feature {Interval} the next parsed record, in `value`
- * @field Done {none} the stream is exhausted
+ * @field Feature {Interval} next record, in `value`
+ * @field Done {none} end of stream
  */
 export def enum Next {
     Feature{value as intervals.Interval},
@@ -66,14 +62,15 @@ export def enum Next {
  *
  * @param path {string} `.bed` or gzipped equivalent
  * @return {Reader} an open cursor
- * @throws {Error} when the file is missing
+ * @throws {Error} kind "ngs.source" when the file is missing
  */
 export func open(path as string) {
     return Reader{src: source.open($path)};
 }
 
 /**
- * Open standard input as a BED stream.
+ * Open standard input as a BED stream. See `source.openStdin` for when that
+ * fails.
  *
  * @return {Reader} an open cursor over stdin
  */
@@ -87,7 +84,7 @@ export func openStdin() {
  *
  * @param r {Reader} an open cursor
  * @return {Next} `Feature` with the record, or `Done` at end of stream
- * @throws {Error} on a record with fewer than three columns
+ * @throws {Error} as `parse`
  */
 export func next(r as Reader) {
     while (source.hasNext($r.src)) {
@@ -100,9 +97,9 @@ export func next(r as Reader) {
 }
 
 /**
- * Close the cursor and release its decompressor.
+ * Close the cursor and release its decompressor. See `source.close`.
  *
- * @param r {Reader} the cursor to close
+ * @param r {Reader} cursor to close
  * @return {int} the decompressor's exit code, 0 when uncompressed
  */
 export func close(r as Reader) {
@@ -112,8 +109,8 @@ export func close(r as Reader) {
 /**
  * Close a fully-consumed cursor, raising if its decompressor failed.
  *
- * @param r {Reader} the cursor to close, already read to exhaustion
- * @throws {Error} on a truncated or corrupt gzip stream
+ * @param r {Reader} cursor to close, already read to exhaustion
+ * @throws {Error} kind "ngs.source" on a truncated or corrupt gzip stream
  */
 export func closeStrict(r as Reader) {
     source.closeStrict($r.src);
@@ -122,12 +119,15 @@ export func closeStrict(r as Reader) {
 /**
  * Parse one BED line into an interval.
  *
- * Reads the first six columns; any further columns (thickStart, blocks, ...)
- * are ignored.
+ * Reads the first six columns and ignores the rest (thickStart, blocks, ...).
+ * A missing or "." name becomes "", a missing or "." score 0.0, a missing
+ * strand ".".
  *
  * @param line {string} one BED record, newline already stripped
  * @return {Interval} the parsed feature
- * @throws {Error} when fewer than three columns are present
+ * @throws {Error} kind "ngs.bed" on fewer than three columns or a non-numeric
+ *   coordinate or score; kind "ngs.intervals" on negative or inverted
+ *   coordinates
  */
 export func parse(line as string) {
     try {
@@ -138,7 +138,7 @@ export func parse(line as string) {
 }
 
 /**
- * Parse a BED record, assuming the caller has wrapped it for error reporting.
+ * Parse a BED record; the caller wraps it for error reporting.
  *
  * Reads columns inline rather than through `core.field` and `core.floatField`:
  * those are two to three extra calls per record, which is the difference
@@ -146,7 +146,8 @@ export func parse(line as string) {
  *
  * @param line {string} one BED record, newline already stripped
  * @return {Interval} the parsed feature
- * @throws {Error} when fewer than three columns are present
+ * @throws {Error} kind "ngs.bed" on fewer than three columns; unwrapped
+ *   conversion errors otherwise
  */
 func parseRow(line as string) {
     def f as list of string init core.splitTab($line);
@@ -176,7 +177,8 @@ func parseRow(line as string) {
 }
 
 /**
- * Render an interval as a six-column BED line.
+ * Render an interval as a BED6 line. An empty name or strand is written ".";
+ * a whole-number score is written without a decimal part.
  *
  * @param iv {Interval} the feature
  * @return {string} tab-delimited BED6, no trailing newline
@@ -205,13 +207,12 @@ export func format(iv as intervals.Interval) {
 /**
  * Read a whole BED file into memory.
  *
- * The convenient path for interval arithmetic, where the feature set is small
- * relative to the sequencing data it describes. For files that do not fit, use
- * the `next` cursor.
+ * Memory grows with the file; for files that do not fit, use `next`.
  *
  * @param path {string} `.bed` or gzipped equivalent
- * @return {list of Interval} every feature in the file, in file order
- * @throws {Error} when the file is missing or a record is malformed
+ * @return {list of Interval} every feature, in file order
+ * @throws {Error} kind "ngs.source" when the file is missing or the gzip stream
+ *   is truncated; as `parse` on a malformed record
  */
 export func readAll(path as string) {
     def r as Reader init open($path);
@@ -235,8 +236,9 @@ export func readAll(path as string) {
  * Write intervals to a BED file, gzipping when the name ends in `.gz`.
  *
  * @param path {string} file to create or overwrite
- * @param ivs {list of Interval} features to write, in the given order
- * @throws {Error} when the target cannot be written
+ * @param ivs {list of Interval} features to write, in order
+ * @throws {Error} kind "ngs.bed" when the compressor exits non-zero; as
+ *   `source.create` when the target cannot be opened
  */
 export func writeAll(path as string, ivs as list of intervals.Interval) {
     def k as source.Sink init source.create($path);
@@ -253,10 +255,10 @@ export func writeAll(path as string, ivs as list of intervals.Interval) {
 }
 
 /**
- * Write one interval to an already-open sink.
+ * Write one interval to an open sink as a `format` line.
  *
  * @param k {source.Sink} an open sink
- * @param iv {Interval} the feature to write
+ * @param iv {Interval} feature to write
  */
 export func write(k as source.Sink, iv as intervals.Interval) {
     source.writeLine($k, format($iv));
@@ -265,7 +267,7 @@ export func write(k as source.Sink, iv as intervals.Interval) {
 /**
  * Whether a line is a BED decoration rather than a record.
  *
- * @param line {string} the raw line
+ * @param line {string} raw line
  * @return {bool} true for blank, `#`, `track` and `browser` lines
  */
 func isDecoration(line as string) {
@@ -291,8 +293,8 @@ func isDecoration(line as string) {
 /**
  * Render a score, dropping the decimal part when it is a whole number.
  *
- * @param score {float} the feature score
- * @return {string} BED-style score text
+ * @param score {float} feature score
+ * @return {string} score text
  */
 func formatScore(score as float) {
     def rounded as int init convert.toInt($score);
@@ -303,12 +305,10 @@ func formatScore(score as float) {
 }
 
 /**
- * Close a cursor on a path that is already failing.
+ * Close a cursor on a path that is already failing, without raising.
  *
- * Cleanup that runs while an error is propagating must not raise one of its own.
- *
- * @param r {Reader} the cursor to close
- * @return {int} the close result, or -1 when closing itself failed
+ * @param r {Reader} cursor to close
+ * @return {int} the close result, -1 when closing itself failed
  */
 func quietClose(r as Reader) {
     try {
@@ -319,10 +319,10 @@ func quietClose(r as Reader) {
 }
 
 /**
- * Close a sink on a path that is already failing.
+ * Close a sink on a path that is already failing, without raising.
  *
- * @param k {source.Sink} the sink to close
- * @return {int} the close result, or -1 when closing itself failed
+ * @param k {source.Sink} sink to close
+ * @return {int} the close result, -1 when closing itself failed
  */
 func quietCloseSink(k as source.Sink) {
     try {

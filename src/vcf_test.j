@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 /**
  * White-box tests for the VCF reader.
@@ -97,4 +97,38 @@ func testFormatRoundTrip() {
 func testMinimalRecordRoundTrip() {
     def line as string init "chr1\t1\t.\tA\tG\t.\t.\t.";
     testing.assertEqual(format(parse($line)), $line);
+}
+
+func testParseInfo() {
+    def m as map of string to string init parseInfo("DP=30;DB;AF=0.5;ANN=A|x=y");
+    testing.assertEqual(len($m), 4);
+    testing.assertEqual($m["DP"], "30");
+    testing.assertEqual($m["DB"], "");
+    testing.assertEqual($m["AF"], "0.5");
+    # The value runs from the first `=` to the end of the entry.
+    testing.assertEqual($m["ANN"], "A|x=y");
+    testing.assertEqual(len(parseInfo(".")), 0);
+    testing.assertEqual(len(parseInfo("")), 0);
+    testing.assertEqual(len(parseInfo("DB;;H2")), 2);
+}
+
+func testFormatInfo() {
+    testing.assertEqual(formatInfo({"DP": "30", "DB": "", "AF": "0.5"}), "DP=30;DB;AF=0.5");
+    testing.assertEqual(formatInfo({}), ".");
+    testing.assertEqual(formatInfo(parseInfo("NS=3;H2;AA=T")), "NS=3;H2;AA=T");
+}
+
+func testOpenStdinLeavesTheHeaderEmpty() {
+    # Opened and closed without reading: the test runner's stdin is not ours.
+    # A stdin that cannot be reopened (a socket gives ENXIO) leaves nothing to
+    # check here.
+    def r as Reader;
+    try {
+        $r = openStdin();
+    } catch (e) {
+        return;
+    }
+    testing.assertEqual(len($r.meta), 0);
+    testing.assertEqual(len($r.samples), 0);
+    testing.assertEqual(close($r), 0);
 }

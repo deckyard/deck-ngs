@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
@@ -172,4 +172,86 @@ func testFifoCleanup() {
     testing.assertEqual(fs.exists($fifo), false);
     fs.remove($p);
     fs.remove($gz);
+}
+
+# New fixtures live inside the checkout, under the git-ignored .ci-fixtures/:
+# in CI the interpreter runs in a container that mounts only the workspace.
+func fixtureDir() {
+    fs.mkdirAll(".ci-fixtures");
+    return fs.makeTempDir(".ci-fixtures", "ngssource");
+}
+
+func testOpenPlainStreamsLines() {
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def p as string init path.join($dir, "reads.fastq");
+    fs.writeString($p, SAMPLE);
+    def s as Source init openPlain($p);
+    testing.assertEqual($s.piped, false);
+    testing.assertEqual($s.helper, "");
+    testing.assertEqual($s.origin, $p);
+    def lines as list of string init [];
+    while (hasNext($s)) {
+        $lines[] = nextLine($s);
+    }
+    testing.assertEqual(close($s), 0);
+    testing.assertEqual(len($lines), 8);
+    testing.assertEqual($lines[0], "@r1");
+    testing.assertEqual($lines[7], "))III");
+}
+
+func testOpenPlainRejectsAMissingFile() {
+    testing.assertThrows("missingPlain", "ngs.source");
+}
+
+func missingPlain() {
+    def s as Source init openPlain(".ci-fixtures/ngs-absent/none.fastq");
+    return close($s);
+}
+
+func testOpenGzipRejectsAMissingFileBeforeSpawning() {
+    testing.assertThrows("missingGzip", "ngs.source");
+}
+
+func missingGzip() {
+    def s as Source init openGzip(".ci-fixtures/ngs-absent/none.fastq.gz");
+    return close($s);
+}
+
+func testCreatePlainWritesVerbatim() {
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def p as string init path.join($dir, "out.txt");
+    def k as Sink init createPlain($p);
+    testing.assertEqual($k.piped, false);
+    testing.assertEqual($k.helper, "");
+    writeLine($k, "one");
+    writeText($k, "two");
+    testing.assertEqual(closeSink($k), 0);
+    testing.assertEqual(fs.readString($p), "one\ntwo");
+}
+
+func testOpenStdinIsAPlainSource() {
+    if (not fs.exists("/dev/stdin")) {
+        testing.assertThrows("stdinSource", "ngs.source");
+        return;
+    }
+    # Opened and closed without reading: the test runner's stdin is not ours.
+    # A stdin that cannot be reopened (a socket gives ENXIO) leaves nothing to
+    # check here.
+    def s as Source;
+    try {
+        $s = openStdin();
+    } catch (e) {
+        return;
+    }
+    testing.assertEqual($s.origin, "<stdin>");
+    testing.assertEqual($s.piped, false);
+    testing.assertEqual($s.helper, "");
+    testing.assertEqual(close($s), 0);
+}
+
+func stdinSource() {
+    def s as Source init openStdin();
+    return close($s);
 }

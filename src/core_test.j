@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
@@ -132,4 +132,50 @@ func testFailUsesNamespacedKind() {
 
 func raiseSample() {
     return fail("sample", "boom");
+}
+
+func testReraiseWrapsAForeignError() {
+    testing.assertThrows("reraiseRuntime", "ngs.bed");
+    def message as string init "";
+    try {
+        reraiseRuntime();
+    } catch (e) {
+        $message = $e.message;
+    }
+    testing.assertEqual($message, "bad digit in record: chr1\tx\t5");
+}
+
+func reraiseRuntime() {
+    return reraise("bed", "chr1\tx\t5", Error{kind: "runtime", message: "bad digit"});
+}
+
+func testReraiseKeepsADeckError() {
+    testing.assertThrows("reraiseDeckError", "ngs.intervals");
+}
+
+func reraiseDeckError() {
+    return reraise("bed", "chr1\t9\t5", Error{kind: "ngs.intervals", message: "inverted"});
+}
+
+# Fixtures live inside the checkout, under the git-ignored .ci-fixtures/: in CI
+# the interpreter runs in a container that mounts only the workspace.
+func fixtureDir() {
+    fs.mkdirAll(".ci-fixtures");
+    return fs.makeTempDir(".ci-fixtures", "ngscore");
+}
+
+func testSameFile() {
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def a as string init path.join($dir, "a.fastq");
+    def b as string init path.join($dir, "b.fastq");
+    fs.writeString($a, "@r\nA\n+\nI\n");
+    fs.writeString($b, "@r\nA\n+\nI\n");
+    testing.assertEqual(sameFile($a, $a), true);
+    testing.assertEqual(sameFile($a, "./" + $a), true);
+    testing.assertEqual(sameFile($a, $b), false);
+    # A path that does not exist yet is never the same file, even as itself.
+    def missing as string init path.join($dir, "out.fastq");
+    testing.assertEqual(sameFile($a, $missing), false);
+    testing.assertEqual(sameFile($missing, $missing), false);
 }

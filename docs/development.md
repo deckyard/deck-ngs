@@ -1,121 +1,133 @@
 # Working on the deck
 
-This page is for people changing the deck rather than using it. Everything here
-runs against a checkout; none of it is needed to consume `@jennifer/ngs`.
+For changing the deck; none of this is needed to use it.
 
-## The gates
+## The gate
 
-Six checks stand between a change and a green build. All of them run locally,
-and CI runs exactly these, through exactly these scripts:
+`tools/check-all.sh` runs every check CI runs, in CI's order, continues past a
+failure and ends with "the gate is green" or the list of failed steps. The
+checks one by one:
 
 ```sh
+tools/check-shared.sh                    # shared files match the template
 jennifer fmt -l src/*.j examples/*.j     # formatting
 jennifer lint src/*.j examples/*.j       # lint
 tools/check-headers.sh                   # SPDX pair and engine floor, against deck.yaml
 tools/check-overlays.sh                  # every module has a co-located overlay
-tools/check-cheatsheet.sh                # every export appears in docs/cheatsheet.md
+tools/check-src.sh                       # src/ holds only .j files
+tools/check-coverage.sh                  # every export is called from an overlay
+tools/check-docs.sh                      # docs, signatures and docblocks match the code
+tools/check-identity.sh                  # no template placeholder left
+for suite in src/*_test.j; do jennifer test "$suite"; done
 tools/check-examples.sh                  # every example still runs
+```
+
+`fmt -l` lists unformatted files and exits 1 if there are any; `lint` exits 1
+on a warning and 0 on info. The scripts catch drift neither tool sees:
+
+- `check-headers.sh` reads the licence and the engine floor from `deck.yaml`
+  and checks every `.j` header states both. `jennifer lint` rejects a malformed
+  pragma but not a missing one.
+- `check-overlays.sh` requires a `MODULE_test.j` beside every module and a
+  module beside every overlay. This is
+  [jvc's publish gate](https://github.com/jennifer-language/jvc/blob/main/docs/manifest.md),
+  checked at push time instead of publish time.
+- `check-docs.sh` compares [the cheatsheet](cheatsheet.md) and every
+  deck-module call in the docs with the code: names, parameter names, arity,
+  struct fields, enum variants, constant values and docblock tags.
+  `docs/.cheatsheet-todo`, when present, lists tolerated older gaps; it only
+  shrinks.
+- `check-coverage.sh` fails when an export is never called from an overlay;
+  `tools/.coverage-todo` is its backlog. The remaining entry,
+  `source.createGzip`, can only be exercised by spawning `gzip`.
+- `check-examples.sh` builds a FASTQ/BED/GFF3/SAM/VCF fixture set in
+  `.ci-fixtures/` inside the checkout, runs each example against it with
+  relative paths, and removes it. `examples/pipeline.j` drives external
+  aligners and is only parse-checked.
+
+The `tools/` scripts other than `check-examples.sh` are shared byte-for-byte
+with the other deck repositories. `tools/deck-lib.sh` discovers the manifest
+(`deck.toml`, `deck.yaml`, `deck.yml` or `deck.json`), the deck's identity and
+whether it is a set of modules or a module with `include`d topics.
+
+## Tests
+
+```sh
+jennifer test src/qc_test.j              # one suite; there is no finer filter
 for suite in src/*_test.j; do jennifer test "$suite"; done
 ```
 
-`fmt -l` lists unformatted files and exits 1 when there are any; `lint` exits 1
-on a warning and 0 when clean. The scripts guard against drift that neither tool
-can see:
+There are 172 tests in twelve overlays. They cover gzip round-trips through the
+FIFO, interval operations against bedtools semantics, coordinate conversion in
+both directions, parser edge cases (minimal records, symbolic VCF alleles,
+`##FASTA` sections, partial adapters), QC values against hand-computed counts,
+and concurrency in `runParallel`.
 
-- **`check-headers.sh`** reads the licence and the engine floor out of
-  `deck.yaml` and checks that every `.j` file's header still states both. Those
-  values are deliberately declared twice, and this is what keeps the copies
-  honest. `jennifer lint` rejects a *malformed* pragma but says nothing about a
-  missing one, so without this a new module could land bare and lint clean.
-- **`check-overlays.sh`** requires a co-located `MODULE_test.j` beside every
-  module, and a module beside every overlay. That is
-  [jvc's publish gate](https://github.com/jennifer-language/jvc/blob/main/docs/manifest.md),
-  enforced here so it fails at push time rather than at publish time.
-- **`check-cheatsheet.sh`** greps every `export` out of `src/` and fails if a
-  name is missing from [the cheatsheet](cheatsheet.md). Adding an export without
-  documenting it fails CI.
-- **`check-examples.sh`** builds a small FASTQ/BED/GFF3/SAM/VCF fixture set in a
-  temporary directory and runs each example against it, because every example
-  here takes input files. `examples/pipeline.j` drives external aligners a
-  runner does not have, so it is parse-checked instead.
+`MODULE_test.j` is a white-box overlay of `MODULE.j`: it calls exported and
+private functions by their bare names and inherits the module's imports, so
+re-importing one of them is an alias collision.
 
-These scripts are shared verbatim with the other deck repositories, and
-`tools/deck-lib.sh` is what makes that possible: it discovers the manifest
-(`deck.toml`, `deck.yaml`, `deck.yml` or `deck.json`), the deck's identity, and
-whether it is a flat set of modules or a module plus `include`d topics. Nothing
-about this deck is written into a workflow.
-
-The suite is **143 tests across twelve overlays**, covering gzip round-trips
-through the FIFO path, interval algebra against known bedtools semantics,
-coordinate conversion in both directions, parser edge cases (minimal records,
-symbolic VCF alleles, `##FASTA` sections, partial adapters), QC values checked
-against an independent reference implementation, and real concurrency in
-`runParallel`.
+In CI `jennifer` runs in a container that mounts only the checkout. A test that
+needs files creates them under `.ci-fixtures/` (git-ignored) and passes
+relative paths. Tests that read standard input only open and close it; on a
+host where it cannot be reopened (a socket) they check nothing.
 
 ## Building the book
 
-The manual is the Markdown in `docs/`, with `docs/SUMMARY.md` as its outline and
-`grimoire.toml` as its configuration. It is built by
-[Grimoire](https://grimoire.jennifer-lang.dev/), Jennifer's own static site
-generator, which ships as a container - so building the book needs nothing
-installed but Docker:
+The manual is the Markdown in `docs/`, with `docs/SUMMARY.md` as its outline
+and `grimoire.toml` as its configuration. It is built by
+[Grimoire](https://grimoire.jennifer-lang.dev/), which ships as a container:
 
 ```sh
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" \
     ghcr.io/jennifer-language/grimoire:latest build      # -> site/
 ```
 
-From a Grimoire checkout instead, with a live preview on `:8080`:
+From a Grimoire checkout, with a live preview on `:8080`:
 
 ```sh
 /path/to/grimoire/bin/grimoire build
 /path/to/grimoire/bin/grimoire serve --watch
 ```
 
-A chapter named in `SUMMARY.md` with no file behind it fails the build, which is
-what stops a dead nav entry reaching the published site. The book is published as
-a site only - `[pdf] enabled = false` in `grimoire.toml`.
+A chapter in `SUMMARY.md` with no file behind it fails the build. The book is
+published as a site only (`[pdf] enabled = false` in `grimoire.toml`).
 
-## What CI does
+## CI
 
-Three workflows, byte-identical to the ones in the other deck repositories:
+Three workflows, byte-identical across the deck repositories:
 
 | workflow | when | what |
 | --- | --- | --- |
-| [`test.yml`](https://github.com/jennifer-language/deck-ngs/blob/main/.github/workflows/test.yml) | push, PR | fmt, lint, the four guards, every suite, every example |
-| [`docs.yml`](https://github.com/jennifer-language/deck-ngs/blob/main/.github/workflows/docs.yml) | push, PR | builds the book; publishes to Pages from `main` |
-| [`release.yml`](https://github.com/jennifer-language/deck-ngs/blob/main/.github/workflows/release.yml) | version tag | re-runs the gate, then cuts the release |
+| [`test.yml`](https://github.com/deckyard/deck-ngs/blob/main/.github/workflows/test.yml) | push, PR | the gate above |
+| [`docs.yml`](https://github.com/deckyard/deck-ngs/blob/main/.github/workflows/docs.yml) | push, PR | builds the book; publishes to Pages from `main` |
+| [`release.yml`](https://github.com/deckyard/deck-ngs/blob/main/.github/workflows/release.yml) | version tag | re-runs the gate, then cuts the release |
 
-Both the tests and the docs run in containers, so a runner needs nothing
-installed: `ghcr.io/jennifer-language/jennifer:dev` for the interpreter and
-`ghcr.io/jennifer-language/grimoire:latest` for the book. The deck's `>=0.25.0`
-floor is not a released version yet and a dev build bypasses it; once 0.25.0
-ships, `JENNIFER_IMAGE` becomes `:0.25` and nothing else moves.
+Tests and docs run in containers, so a runner needs nothing installed.
+`tools/deck-lib.sh` picks the interpreter image from the floor: a floor at or
+below the newest release (0.25) runs on that release's image, here
+`ghcr.io/jennifer-language/jennifer:0.25`; a newer floor runs on `:dev`, which
+bypasses the floor check. `JENNIFER_IMAGE` overrides the choice. The book uses
+`ghcr.io/jennifer-language/grimoire:latest`.
 
-`test.yml` also carries a `tiny` job that only does anything when the manifest
-lists `jennifer-tiny` under `engines`. This deck does not - streaming gzip and
-pipeline orchestration need `exec` - so the job resolves to a no-op here.
+`test.yml` has a `tiny` job that runs only when the manifest lists
+`jennifer-tiny` under `engines`. This deck does not, since streaming gzip and
+`pipeline` need `exec`.
 
-Publishing the book needs GitHub Pages set to **Build and deployment → Source →
-GitHub Actions** in the repository settings.
+Publishing the book needs GitHub Pages set to Build and deployment > Source >
+GitHub Actions in the repository settings.
 
 ## Cutting a release
 
-Tag the commit with the version already in `deck.yaml`. The `release` job refuses
-a tag that disagrees with the manifest, and accepts either `0.2.0` or `v0.2.0`.
+Tag the commit with the version in `deck.yaml`, written plain (`0.2.0`, no `v`).
+`release.yml` refuses any other tag.
 
-`tools/pack.sh` builds the archive, and it is the shape
+`tools/pack.sh` builds the archive in the shape
 [the deck spec](https://github.com/jennifer-language/jvc/blob/main/docs/deck-spec.md)
-describes: `jennifer-ngs-<version>.tar.gz`, one wrapping directory, and a `src/`
-subtree inside it, with the manifest, licence and README beside it. `jvc` vendors
-`src/` and ignores everything else. Alongside it go two forms of the same digest
-- a `sha256sum -c` file for humans, and the `sha256:<hex>` the registry records
-as its integrity pin.
+describes: `deckyard-ngs-<version>.tar.gz`, one wrapping directory holding
+`src/` and, beside it, the manifest, licence and README. `jvc` vendors `src/`
+and ignores the rest. Two forms of the digest go with it: a `sha256sum -c` file
+and the `sha256:<hex>` the registry records as its integrity pin.
 
-Installing that archive by hand means stripping the two leading levels:
-
-```sh
-mkdir -p vendor/jennifer/ngs
-tar -xzf jennifer-ngs-0.2.0.tar.gz -C vendor/jennifer/ngs \
-    --strip-components=2 jennifer-ngs-0.2.0/src
-```
+[Installing and importing](getting-started.md#installing) shows how to vendor
+the archive by hand.

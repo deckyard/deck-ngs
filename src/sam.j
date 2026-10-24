@@ -1,20 +1,19 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
  * Streaming SAM reading and writing.
  *
- * SAM only - BAM and CRAM are deliberately out of scope for this deck: they need
- * BGZF (blocked gzip with random access), which `compress` does not provide, and
- * their value lies in the alignment compute this deck does not attempt. Pipe
- * through `samtools view` and read its SAM output here.
+ * SAM only. BAM and CRAM need BGZF (blocked gzip with random access), which
+ * `compress` does not provide; pipe them through `samtools view` and read the
+ * SAM output here.
  *
- * The `@`-prefixed header block is consumed when the reader is opened and kept
- * on the `Reader`, so `next` only ever yields alignment records.
+ * `open` captures the `@` header block on the `Reader`; `next` yields only
+ * alignment records.
  *
- * **Coordinates.** SAM `pos` is 1-based; `toInterval` converts to the 0-based
- * half-open convention and uses the CIGAR string to compute the reference end.
+ * **Coordinates.** `Record.pos` is 1-based as in the file; `toInterval`
+ * converts to 0-based half-open and takes the reference end from the CIGAR.
  *
  * @module sam
  * @since 0.1.0
@@ -26,60 +25,60 @@ import "./core.j" as core;
 import "./source.j" as source;
 import "./intervals.j" as intervals;
 
-/** Read is paired in sequencing. */
+/** FLAG 0x1: template has multiple segments (paired). */
 export def const FLAG_PAIRED as int init 0x1;
 
-/** Each segment is properly aligned according to the aligner. */
+/** FLAG 0x2: each segment properly aligned, according to the aligner. */
 export def const FLAG_PROPER_PAIR as int init 0x2;
 
-/** This segment is unmapped. */
+/** FLAG 0x4: segment unmapped. */
 export def const FLAG_UNMAPPED as int init 0x4;
 
-/** The mate segment is unmapped. */
+/** FLAG 0x8: next segment (mate) unmapped. */
 export def const FLAG_MATE_UNMAPPED as int init 0x8;
 
-/** This segment is on the reverse strand. */
+/** FLAG 0x10: segment reverse complemented. */
 export def const FLAG_REVERSE as int init 0x10;
 
-/** The mate segment is on the reverse strand. */
+/** FLAG 0x20: mate reverse complemented. */
 export def const FLAG_MATE_REVERSE as int init 0x20;
 
-/** This is the first segment of the template. */
+/** FLAG 0x40: first segment in the template. */
 export def const FLAG_FIRST as int init 0x40;
 
-/** This is the last segment of the template. */
+/** FLAG 0x80: last segment in the template. */
 export def const FLAG_LAST as int init 0x80;
 
-/** This is a secondary alignment. */
+/** FLAG 0x100: secondary alignment. */
 export def const FLAG_SECONDARY as int init 0x100;
 
-/** The read failed platform or vendor quality checks. */
+/** FLAG 0x200: failed platform or vendor quality checks. */
 export def const FLAG_QC_FAIL as int init 0x200;
 
-/** The read is a PCR or optical duplicate. */
+/** FLAG 0x400: PCR or optical duplicate. */
 export def const FLAG_DUPLICATE as int init 0x400;
 
-/** This is a supplementary alignment. */
+/** FLAG 0x800: supplementary alignment. */
 export def const FLAG_SUPPLEMENTARY as int init 0x800;
 
-/** Placeholder used for an absent column. */
+/** Placeholder for an absent string column. */
 export def const MISSING as string init "*";
 
 /**
  * One SAM alignment record.
  *
  * @field qname {string} query template name
- * @field flag {int} bitwise FLAG field
+ * @field flag {int} bitwise FLAG
  * @field rname {string} reference sequence name, "*" when unmapped
  * @field pos {int} 1-based leftmost mapping position, 0 when unmapped
- * @field mapq {int} mapping quality
- * @field cigar {string} the raw CIGAR string, "*" when unavailable
- * @field rnext {string} reference name of the mate
+ * @field mapq {int} mapping quality, 255 when unavailable
+ * @field cigar {string} raw CIGAR, "*" when unavailable
+ * @field rnext {string} reference name of the mate, "=" when the same
  * @field pnext {int} 1-based position of the mate
  * @field tlen {int} observed template length, signed
- * @field seq {string} the segment sequence, "*" when absent
+ * @field seq {string} segment sequence, "*" when absent
  * @field qual {string} raw ASCII quality string, "*" when absent
- * @field tags {list of string} the optional `TAG:TYPE:VALUE` columns, verbatim
+ * @field tags {list of string} optional `TAG:TYPE:VALUE` columns, verbatim
  */
 export def struct Record {
     qname as string,
@@ -99,8 +98,8 @@ export def struct Record {
 /**
  * One CIGAR operation.
  *
- * @field length {int} number of bases the operation covers
- * @field op {string} the single-character operation code (M, I, D, N, S, H, P, =, X)
+ * @field length {int} bases the operation covers
+ * @field op {string} one-character code (M, I, D, N, S, H, P, =, X)
  */
 export def struct CigarOp {
     length as int,
@@ -110,8 +109,8 @@ export def struct CigarOp {
 /**
  * A streaming SAM cursor, carrying the file's header block.
  *
- * @field src {source.Source} the underlying line source
- * @field header {list of string} the `@`-prefixed header lines, in file order
+ * @field src {source.Source} underlying line source
+ * @field header {list of string} `@` header lines, in file order
  */
 export def struct Reader {
     src as source.Source,
@@ -121,8 +120,8 @@ export def struct Reader {
 /**
  * The result of advancing a SAM cursor.
  *
- * @field Alignment {Record} the next parsed record, in `value`
- * @field Done {none} the stream is exhausted
+ * @field Alignment {Record} next record, in `value`
+ * @field Done {none} end of stream
  */
 export def enum Next {
     Alignment{value as Record},
@@ -132,13 +131,13 @@ export def enum Next {
 /**
  * Open a SAM file for streaming, capturing its header block.
  *
- * The header is read by a short separate pass over the front of the file, so the
- * record stream itself starts clean at byte zero; `next` then skips the `@`
- * lines as it walks. Headers are small, so the second pass costs little.
+ * The header comes from a separate short pass over the front of the file
+ * (`headerOf`); the record stream starts at byte zero and `next` skips the `@`
+ * lines. A gzipped file is decompressed from the start twice.
  *
  * @param path {string} `.sam` or gzipped equivalent
  * @return {Reader} an open cursor with `header` populated
- * @throws {Error} when the file is missing
+ * @throws {Error} kind "ngs.source" when the file is missing
  */
 export func open(path as string) {
     def head as list of string init headerOf($path);
@@ -148,10 +147,10 @@ export func open(path as string) {
 /**
  * Open standard input as a SAM stream.
  *
- * The natural way to read `samtools view -h` output. `next` skips the header
- * block, but `header` is left empty: a stream cannot be re-read, and reading the
- * header eagerly would consume the first alignment with no way to put it back.
- * Use `open` on a path when you need `referenceSizes`.
+ * For `samtools view -h` output. `next` skips the header block, but `header`
+ * stays empty: reading it eagerly would consume the first alignment, and a
+ * stream cannot be re-read. Use `open` on a path when you need
+ * `referenceSizes`. See `source.openStdin` for when opening fails.
  *
  * @return {Reader} an open cursor over stdin, with an empty `header`
  */
@@ -163,9 +162,11 @@ export func openStdin() {
 /**
  * Advance the cursor to the next alignment record.
  *
+ * Skips blank lines and `@` lines.
+ *
  * @param r {Reader} an open cursor
  * @return {Next} `Alignment` with the record, or `Done` at end of stream
- * @throws {Error} on a record with fewer than eleven columns
+ * @throws {Error} as `parse`
  */
 export func next(r as Reader) {
     while (source.hasNext($r.src)) {
@@ -178,9 +179,9 @@ export func next(r as Reader) {
 }
 
 /**
- * Close the cursor and release its decompressor.
+ * Close the cursor and release its decompressor. See `source.close`.
  *
- * @param r {Reader} the cursor to close
+ * @param r {Reader} cursor to close
  * @return {int} the decompressor's exit code, 0 when uncompressed
  */
 export func close(r as Reader) {
@@ -190,8 +191,8 @@ export func close(r as Reader) {
 /**
  * Close a fully-consumed cursor, raising if its decompressor failed.
  *
- * @param r {Reader} the cursor to close
- * @throws {Error} on a truncated or corrupt gzip stream
+ * @param r {Reader} cursor to close, already read to exhaustion
+ * @throws {Error} kind "ngs.source" on a truncated or corrupt gzip stream
  */
 export func closeStrict(r as Reader) {
     source.closeStrict($r.src);
@@ -202,7 +203,8 @@ export func closeStrict(r as Reader) {
  *
  * @param line {string} one record, newline already stripped
  * @return {Record} the parsed alignment
- * @throws {Error} when fewer than eleven columns are present
+ * @throws {Error} kind "ngs.sam" on fewer than eleven columns or a non-numeric
+ *   FLAG, POS, MAPQ, PNEXT or TLEN
  */
 export func parse(line as string) {
     try {
@@ -213,7 +215,7 @@ export func parse(line as string) {
 }
 
 /**
- * Parse a SAM record, assuming the caller has wrapped it for error reporting.
+ * Parse a SAM record; the caller wraps it for error reporting.
  *
  * Converts numeric columns directly rather than through a guarded helper per
  * column: one exception frame for the record replaces five, which is the bulk
@@ -221,7 +223,8 @@ export func parse(line as string) {
  *
  * @param line {string} one record, newline already stripped
  * @return {Record} the parsed alignment
- * @throws {Error} when fewer than eleven columns are present
+ * @throws {Error} kind "ngs.sam" on fewer than eleven columns; unwrapped
+ *   conversion errors otherwise
  */
 func parseRow(line as string) {
     def f as list of string init core.splitTab($line);
@@ -250,7 +253,7 @@ func parseRow(line as string) {
 }
 
 /**
- * Render an alignment back to a SAM record line.
+ * Render an alignment as a SAM line, tags appended verbatim.
  *
  * @param rec {Record} the alignment
  * @return {string} one tab-delimited record, no trailing newline
@@ -279,71 +282,70 @@ export func format(rec as Record) {
  * Whether a FLAG bit is set on a record.
  *
  * @param rec {Record} the alignment
- * @param bit {int} one of the `FLAG_*` constants
- * @return {bool}
+ * @param bit {int} a `FLAG_*` constant, or several OR-ed together
+ * @return {bool} true when any of the bits is set
  */
 export func hasFlag(rec as Record, bit as int) {
     return ($rec.flag & $bit) != 0;
 }
 
 /**
- * Whether the record is unmapped.
+ * Whether the record is unmapped (0x4).
  *
  * @param rec {Record} the alignment
- * @return {bool}
+ * @return {bool} true when unmapped
  */
 export func isUnmapped(rec as Record) {
     return hasFlag($rec, FLAG_UNMAPPED);
 }
 
 /**
- * Whether the record is mapped to the reverse strand.
+ * Whether the record is reverse complemented (0x10).
  *
  * @param rec {Record} the alignment
- * @return {bool}
+ * @return {bool} true on the reverse strand
  */
 export func isReverse(rec as Record) {
     return hasFlag($rec, FLAG_REVERSE);
 }
 
 /**
- * Whether the record is a secondary alignment.
+ * Whether the record is a secondary alignment (0x100).
  *
  * @param rec {Record} the alignment
- * @return {bool}
+ * @return {bool} true when secondary
  */
 export func isSecondary(rec as Record) {
     return hasFlag($rec, FLAG_SECONDARY);
 }
 
 /**
- * Whether the record is a supplementary alignment.
+ * Whether the record is a supplementary alignment (0x800).
  *
  * @param rec {Record} the alignment
- * @return {bool}
+ * @return {bool} true when supplementary
  */
 export func isSupplementary(rec as Record) {
     return hasFlag($rec, FLAG_SUPPLEMENTARY);
 }
 
 /**
- * Whether the record is flagged as a PCR or optical duplicate.
+ * Whether the record is a PCR or optical duplicate (0x400).
  *
  * @param rec {Record} the alignment
- * @return {bool}
+ * @return {bool} true when flagged as a duplicate
  */
 export func isDuplicate(rec as Record) {
     return hasFlag($rec, FLAG_DUPLICATE);
 }
 
 /**
- * Whether the record is a primary alignment: mapped, not secondary, not
- * supplementary.
- *
- * The usual filter for counting reads once.
+ * Whether the record is a primary alignment: none of 0x4, 0x100, 0x800 set.
+ * The usual filter for counting reads once; duplicates and QC failures still
+ * pass.
  *
  * @param rec {Record} the alignment
- * @return {bool}
+ * @return {bool} true when primary
  */
 export func isPrimary(rec as Record) {
     # One mask instead of three calls into `hasFlag`; this runs once per record
@@ -370,9 +372,12 @@ export func strandOf(rec as Record) {
 /**
  * Split a CIGAR string into its operations.
  *
- * @param cigar {string} the raw CIGAR, "*" for none
- * @return {list of CigarOp} operations in order, empty for "*"
- * @throws {Error} on a malformed CIGAR string
+ * Operation codes are not validated; any non-digit character is taken as one.
+ *
+ * @param cigar {string} raw CIGAR, "*" for none
+ * @return {list of CigarOp} operations in order, empty for "*" or ""
+ * @throws {Error} kind "ngs.sam" on an operation without a length or a trailing
+ *   length without an operation
  */
 export func parseCigar(cigar as string) {
     def out as list of CigarOp init [];
@@ -400,11 +405,11 @@ export func parseCigar(cigar as string) {
 /**
  * Number of reference bases a CIGAR string consumes.
  *
- * Counts M, D, N, = and X; insertions, soft clips, hard clips and padding do
- * not advance the reference.
+ * Counts M, D, N, = and X; I, S, H and P do not advance the reference.
  *
- * @param cigar {string} the raw CIGAR
- * @return {int} reference span in bases
+ * @param cigar {string} raw CIGAR
+ * @return {int} reference span in bases, 0 for "*"
+ * @throws {Error} as `parseCigar`
  */
 export func referenceLength(cigar as string) {
     def total as int init 0;
@@ -421,8 +426,9 @@ export func referenceLength(cigar as string) {
  *
  * Counts M, I, S, = and X.
  *
- * @param cigar {string} the raw CIGAR
- * @return {int} query span in bases
+ * @param cigar {string} raw CIGAR
+ * @return {int} query span in bases, 0 for "*"
+ * @throws {Error} as `parseCigar`
  */
 export func queryLength(cigar as string) {
     def total as int init 0;
@@ -435,14 +441,15 @@ export func queryLength(cigar as string) {
 }
 
 /**
- * The reference interval an alignment covers, as a half-open interval.
- *
- * Converts SAM's 1-based `pos` to the 0-based convention and derives the end
- * from the CIGAR string.
+ * The reference range an alignment covers, as a 0-based half-open interval:
+ * `pos - 1` to that plus `referenceLength(cigar)`. When the CIGAR spans no
+ * reference bases ("*"), the length of `seq` is used instead.
  *
  * @param rec {Record} a mapped alignment
- * @return {Interval} the covered reference range, named after the read
- * @throws {Error} when the record is unmapped
+ * @return {Interval} the range, named after the read, MAPQ as score, strand
+ *   from `strandOf`
+ * @throws {Error} kind "ngs.sam" when the record is unmapped or `rname` is "*",
+ *   or as `parseCigar`
  */
 export func toInterval(rec as Record) {
     if (isUnmapped($rec) or $rec.rname == MISSING) {
@@ -461,9 +468,9 @@ export func toInterval(rec as Record) {
  * Read the value of an optional tag.
  *
  * @param rec {Record} the alignment
- * @param tagName {string} the two-character tag name, e.g. "NM"
- * @param fallback {string} value to return when the tag is absent
- * @return {string} the tag's value with its `TAG:TYPE:` prefix removed
+ * @param tagName {string} two-character tag, e.g. "NM"
+ * @param fallback {string} value for an absent tag
+ * @return {string} the value as text, `TAG:TYPE:` removed, or `fallback`
  */
 export func tagValue(rec as Record, tagName as string, fallback as string) {
     def prefix as string init $tagName + ":";
@@ -483,11 +490,12 @@ export func tagValue(rec as Record, tagName as string, fallback as string) {
 /**
  * The reference sequences declared in the header, as chromosome sizes.
  *
- * Parses the `@SQ SN:name LN:length` lines, giving the chromosome-size map that
- * `intervals.complement` needs.
+ * Parses the `@SQ SN:name LN:length` lines into the size map
+ * `intervals.complement` takes. Empty for a reader from `openStdin`.
  *
- * @param r {Reader} an open cursor
- * @return {map of string to int} reference name to length
+ * @param r {Reader} a cursor from `open`
+ * @return {map of string to int} reference name to length, in header order
+ * @throws {Error} kind "ngs.sam" when an LN value is not an integer
  */
 export func referenceSizes(r as Reader) {
     def out as map of string to int init {};
@@ -505,16 +513,16 @@ export func referenceSizes(r as Reader) {
 }
 
 /**
- * Read just the `@` header block of a SAM file.
+ * Read only the `@` header block of a SAM file.
  *
- * Opens the file, reads until the first alignment line and closes again, so it
- * touches only the front of the file. Uses `close` rather than `closeStrict`
- * because abandoning a gzip stream early makes the decompressor exit on
- * `SIGPIPE`, which is expected here.
+ * Reads up to the first line not starting with `@` and closes, so it touches
+ * only the front of the file. Uses `close`, not `closeStrict`: abandoning a
+ * gzip stream early makes the decompressor exit on `SIGPIPE`, which is
+ * expected here.
  *
  * @param path {string} `.sam` or gzipped equivalent
  * @return {list of string} the header lines, in file order
- * @throws {Error} when the file is missing
+ * @throws {Error} kind "ngs.source" when the file is missing
  */
 export func headerOf(path as string) {
     def s as source.Source init source.open($path);
@@ -534,8 +542,8 @@ export func headerOf(path as string) {
 /**
  * Read the value of a header field such as `SN:` from an `@SQ` line.
  *
- * @param line {string} the header line
- * @param prefix {string} the field prefix including its colon
+ * @param line {string} header line
+ * @param prefix {string} field prefix including its colon
  * @return {string} the field value, "" when absent
  */
 func headerTag(line as string, prefix as string) {
@@ -550,8 +558,8 @@ func headerTag(line as string, prefix as string) {
 /**
  * Whether a CIGAR operation advances the reference position.
  *
- * @param op {string} the operation code
- * @return {bool}
+ * @param op {string} operation code
+ * @return {bool} true for M, D, N, = and X
  */
 func consumesReference(op as string) {
     return $op == "M" or $op == "D" or $op == "N" or $op == "=" or $op == "X";
@@ -560,8 +568,8 @@ func consumesReference(op as string) {
 /**
  * Whether a CIGAR operation consumes query bases.
  *
- * @param op {string} the operation code
- * @return {bool}
+ * @param op {string} operation code
+ * @return {bool} true for M, I, S, = and X
  */
 func consumesQuery(op as string) {
     return $op == "M" or $op == "I" or $op == "S" or $op == "=" or $op == "X";
@@ -571,19 +579,17 @@ func consumesQuery(op as string) {
  * Whether a one-character string is an ASCII digit.
  *
  * @param ch {string} one character
- * @return {bool}
+ * @return {bool} true for 0-9
  */
 func isDigit(ch as string) {
     return $ch >= "0" and $ch <= "9";
 }
 
 /**
- * Close a source on a path that is already failing.
+ * Close a source on a path that is already failing, without raising.
  *
- * Cleanup that runs while an error is propagating must not raise one of its own.
- *
- * @param s {source.Source} the source to close
- * @return {int} the close result, or -1 when closing itself failed
+ * @param s {source.Source} source to close
+ * @return {int} the close result, -1 when closing itself failed
  */
 func quietClose(s as source.Source) {
     try {

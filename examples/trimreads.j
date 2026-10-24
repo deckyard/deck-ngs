@@ -1,13 +1,13 @@
 #!/usr/bin/env -S jennifer run
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 #
 # Adapter- and quality-trim a FASTQ file, streaming in and out.
 #
 #   jennifer run examples/trimreads.j in.fastq.gz out.fastq.gz
 #
-# The output is gzip-compressed automatically because the name ends in `.gz`.
+# The output is gzip-compressed because its name ends in `.gz`.
 use io;
 use os;
 import "../src/trim.j" as trim;

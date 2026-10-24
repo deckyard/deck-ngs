@@ -1,15 +1,14 @@
 #!/usr/bin/env -S jennifer run
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 #
 # One-pass QC report over a FASTQ file, gzipped or not.
 #
 #   jennifer run examples/qcreport.j reads.fastq.gz [maxReads]
 #
-# Inside a project that installed the deck, the import would read
-# `import "@jennifer/ngs/qc.j" as qc;` - the relative paths here just let the
-# example run straight from a checkout.
+# The relative imports run the example from a checkout; a project that
+# installed the deck writes `import "@deckyard/ngs/qc.j" as qc;`.
 use io;
 use os;
 use convert;

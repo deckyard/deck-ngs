@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 /**
  * White-box tests for the SAM reader.
@@ -76,4 +76,50 @@ func testHeaderAndReferenceSizes() {
     testing.assertEqual($sizes["chr2"], 250);
     testing.assertEqual(len($seen), 1);
     testing.assertEqual($seen[0], "r1");
+}
+
+func flagged(flag as string) {
+    return parse("r1\t" + $flag + "\tchr1\t100\t60\t4M\t*\t0\t0\tACGT\tIIII");
+}
+
+func testFlagPredicates() {
+    # 1040 = 0x400 duplicate + 0x10 reverse
+    def dup as Record init flagged("1040");
+    testing.assertEqual(hasFlag($dup, FLAG_DUPLICATE), true);
+    testing.assertEqual(hasFlag($dup, FLAG_REVERSE), true);
+    testing.assertEqual(hasFlag($dup, FLAG_PAIRED), false);
+    testing.assertEqual(isDuplicate($dup), true);
+    testing.assertEqual(isSecondary($dup), false);
+    testing.assertEqual(isSupplementary($dup), false);
+    testing.assertEqual(isPrimary($dup), true);
+
+    def secondary as Record init flagged("256");
+    testing.assertEqual(isSecondary($secondary), true);
+    testing.assertEqual(isSupplementary($secondary), false);
+    testing.assertEqual(isDuplicate($secondary), false);
+
+    # 2064 = 0x800 supplementary + 0x10 reverse
+    def supplementary as Record init flagged("2064");
+    testing.assertEqual(isSupplementary($supplementary), true);
+    testing.assertEqual(isSecondary($supplementary), false);
+    testing.assertEqual(isPrimary($supplementary), false);
+
+    # A combined mask asks whether any of its bits is set.
+    testing.assertEqual(hasFlag($secondary, FLAG_SECONDARY | FLAG_SUPPLEMENTARY), true);
+    testing.assertEqual(hasFlag(flagged("0"), FLAG_SECONDARY | FLAG_SUPPLEMENTARY), false);
+}
+
+func testOpenStdinLeavesTheHeaderEmpty() {
+    # Opened and closed without reading: the test runner's stdin is not ours.
+    # A stdin that cannot be reopened (a socket gives ENXIO) leaves nothing to
+    # check here.
+    def r as Reader;
+    try {
+        $r = openStdin();
+    } catch (e) {
+        return;
+    }
+    testing.assertEqual(len($r.header), 0);
+    testing.assertEqual($r.src.origin, "<stdin>");
+    testing.assertEqual(close($r), 0);
 }

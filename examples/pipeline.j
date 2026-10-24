@@ -1,17 +1,16 @@
 #!/usr/bin/env -S jennifer run
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 #
-# A Snakemake-lite per-sample pipeline: QC each sample, trim it, then run an
-# external aligner - fanned out across cores, resumable, and failing loudly.
+# A per-sample pipeline: QC and trim each sample, then run an external step
+# on every trimmed file in parallel. Up-to-date outputs are skipped on a rerun.
 #
 #   jennifer run examples/pipeline.j sampleA.fastq.gz sampleB.fastq.gz
 #
-# The alignment step here shells out to `wc -c` as a stand-in so the example runs
-# anywhere; swap it for the real `bwa mem` argv and the structure is unchanged.
-# That substitution is the point of the deck: alignment stays with the native
-# tool, and this file is the glue around it.
+# The external step is `gzip -dc | wc -l`, a stand-in so the example runs
+# anywhere; replace it with the real `bwa mem` command and the structure stays
+# the same.
 use io;
 use os;
 use fs;

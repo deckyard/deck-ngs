@@ -1,17 +1,15 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
  * Streaming VCF reading and writing.
  *
- * The `##` meta lines and the `#CHROM` column header are captured when the
- * reader is opened, so sample names are available up front and `next` yields
- * only variant records.
+ * `open` captures the `##` meta lines and the `#CHROM` sample names on the
+ * `Reader`; `next` yields only variant records.
  *
- * **Coordinates.** VCF `POS` is 1-based and inclusive; `toInterval` converts to
- * the 0-based half-open convention used by `intervals`, spanning the reference
- * allele.
+ * **Coordinates.** `Variant.pos` is VCF's 1-based POS; `toInterval` converts to
+ * 0-based half-open, spanning the reference allele.
  *
  * @module vcf
  * @since 0.1.0
@@ -24,10 +22,10 @@ import "./core.j" as core;
 import "./source.j" as source;
 import "./intervals.j" as intervals;
 
-/** Placeholder used for an absent column. */
+/** Placeholder for an absent column. */
 export def const MISSING as string init ".";
 
-/** Number of fixed columns before the per-sample genotype columns. */
+/** Columns before the first sample column: the eight fixed ones plus FORMAT. */
 export def const FIXED_COLUMNS as int init 9;
 
 /**
@@ -35,14 +33,14 @@ export def const FIXED_COLUMNS as int init 9;
  *
  * @field chrom {string} reference sequence name
  * @field pos {int} 1-based position of the first reference base
- * @field id {string} variant identifier, "" when absent
- * @field ref {string} the reference allele
+ * @field id {string} variant identifier, "" when "."
+ * @field ref {string} reference allele
  * @field alt {list of string} alternate alleles, empty when "."
- * @field qual {float} phred-scaled variant quality, -1.0 when absent
- * @field filter {string} the FILTER column verbatim, e.g. "PASS"
+ * @field qual {float} Phred-scaled quality, -1.0 when "."
+ * @field filter {string} FILTER column verbatim, e.g. "PASS"
  * @field info {map of string to string} parsed INFO; a flag maps to ""
- * @field format {list of string} the FORMAT keys, in column order
- * @field samples {list of string} the per-sample columns verbatim
+ * @field format {list of string} FORMAT keys, in column order
+ * @field samples {list of string} per-sample columns verbatim
  */
 export def struct Variant {
     chrom as string,
@@ -60,8 +58,8 @@ export def struct Variant {
 /**
  * A streaming VCF cursor, carrying the file's header.
  *
- * @field src {source.Source} the underlying line source
- * @field meta {list of string} the `##` meta-information lines, in file order
+ * @field src {source.Source} underlying line source
+ * @field meta {list of string} `##` meta-information lines, in file order
  * @field samples {list of string} sample names from the `#CHROM` line
  */
 export def struct Reader {
@@ -73,8 +71,8 @@ export def struct Reader {
 /**
  * The result of advancing a VCF cursor.
  *
- * @field Record {Variant} the next parsed variant, in `value`
- * @field Done {none} the stream is exhausted
+ * @field Record {Variant} next variant, in `value`
+ * @field Done {none} end of stream
  */
 export def enum Next {
     Record{value as Variant},
@@ -84,13 +82,13 @@ export def enum Next {
 /**
  * Open a VCF file for streaming, capturing its header.
  *
- * The header is read by a short separate pass over the front of the file, so
- * sample names are known before the first record while the record stream still
- * starts clean; `next` skips the `#` lines as it walks.
+ * The header comes from a separate short pass over the front of the file
+ * (`headerOf`); the record stream starts at byte zero and `next` skips the `#`
+ * lines. A gzipped file is decompressed from the start twice.
  *
- * @param path {string} `.vcf` or gzipped equivalent
+ * @param path {string} `.vcf` or gzipped equivalent (plain gzip or BGZF)
  * @return {Reader} an open cursor with `meta` and `samples` populated
- * @throws {Error} when the file is missing
+ * @throws {Error} kind "ngs.source" when the file is missing
  */
 export func open(path as string) {
     def head as list of string init headerOf($path);
@@ -100,10 +98,10 @@ export func open(path as string) {
 /**
  * Open standard input as a VCF stream.
  *
- * `next` skips the header, but `meta` and `samples` are left empty: a stream
- * cannot be re-read, and reading the header eagerly would consume the first
- * variant with no way to put it back. Use `open` on a path when you need
- * sample names.
+ * `next` skips the header, but `meta` and `samples` stay empty: reading them
+ * eagerly would consume the first variant, and a stream cannot be re-read. Use
+ * `open` on a path when you need sample names. See `source.openStdin` for when
+ * opening fails.
  *
  * @return {Reader} an open cursor over stdin, with an empty header
  */
@@ -115,9 +113,11 @@ export func openStdin() {
 /**
  * Advance the cursor to the next variant record.
  *
+ * Skips blank lines and `#` lines.
+ *
  * @param r {Reader} an open cursor
  * @return {Next} `Record` with the variant, or `Done` at end of stream
- * @throws {Error} on a record with fewer than eight columns
+ * @throws {Error} as `parse`
  */
 export func next(r as Reader) {
     while (source.hasNext($r.src)) {
@@ -130,9 +130,9 @@ export func next(r as Reader) {
 }
 
 /**
- * Close the cursor and release its decompressor.
+ * Close the cursor and release its decompressor. See `source.close`.
  *
- * @param r {Reader} the cursor to close
+ * @param r {Reader} cursor to close
  * @return {int} the decompressor's exit code, 0 when uncompressed
  */
 export func close(r as Reader) {
@@ -142,19 +142,20 @@ export func close(r as Reader) {
 /**
  * Close a fully-consumed cursor, raising if its decompressor failed.
  *
- * @param r {Reader} the cursor to close
- * @throws {Error} on a truncated or corrupt gzip stream
+ * @param r {Reader} cursor to close, already read to exhaustion
+ * @throws {Error} kind "ngs.source" on a truncated or corrupt gzip stream
  */
 export func closeStrict(r as Reader) {
     source.closeStrict($r.src);
 }
 
 /**
- * Read just the header lines of a VCF file.
+ * Read the header lines of a VCF file and close it. Reads only the front of
+ * the file; the decompressor's `SIGPIPE` exit is ignored.
  *
  * @param path {string} `.vcf` or gzipped equivalent
  * @return {list of string} every leading `#` line, in file order
- * @throws {Error} when the file is missing
+ * @throws {Error} kind "ngs.source" when the file is missing
  */
 export func headerOf(path as string) {
     def s as source.Source init source.open($path);
@@ -176,7 +177,8 @@ export func headerOf(path as string) {
  *
  * @param line {string} one record, newline already stripped
  * @return {Variant} the parsed variant
- * @throws {Error} when fewer than eight columns are present
+ * @throws {Error} kind "ngs.vcf" on fewer than eight columns or a non-numeric
+ *   POS or QUAL
  */
 export func parse(line as string) {
     try {
@@ -187,11 +189,12 @@ export func parse(line as string) {
 }
 
 /**
- * Parse a VCF record, assuming the caller has wrapped it for error reporting.
+ * Parse a VCF record; the caller wraps it for error reporting.
  *
  * @param line {string} one record, newline already stripped
  * @return {Variant} the parsed variant
- * @throws {Error} when fewer than eight columns are present
+ * @throws {Error} kind "ngs.vcf" on fewer than eight columns; unwrapped
+ *   conversion errors otherwise
  */
 func parseRow(line as string) {
     def f as list of string init core.splitTab($line);
@@ -240,11 +243,11 @@ func parseRow(line as string) {
 /**
  * Parse a VCF INFO column into a map.
  *
- * A `key=value` entry maps to its value; a bare flag maps to the empty string,
- * so use `maps.has` to test for a flag's presence.
+ * A `key=value` entry maps to the text after the first `=`; a flag maps to "",
+ * so test a flag with `hasInfo`. Values are not split on `,`.
  *
- * @param text {string} the raw INFO column
- * @return {map of string to string}
+ * @param text {string} raw INFO column
+ * @return {map of string to string} keys to values in column order, empty for "." or ""
  */
 export func parseInfo(text as string) {
     def out as map of string to string init {};
@@ -270,8 +273,8 @@ export func parseInfo(text as string) {
  *
  * @param v {Variant} the variant
  * @param key {string} INFO key
- * @param fallback {string} value to return when the key is missing
- * @return {string}
+ * @param fallback {string} value for a missing key
+ * @return {string} the value ("" for a flag), or `fallback`
  */
 export func info(v as Variant, key as string, fallback as string) {
     if (not maps.has($v.info, $key)) {
@@ -281,11 +284,11 @@ export func info(v as Variant, key as string, fallback as string) {
 }
 
 /**
- * Whether an INFO flag is present.
+ * Whether an INFO key or flag is present.
  *
  * @param v {Variant} the variant
  * @param key {string} INFO key
- * @return {bool}
+ * @return {bool} true when present
  */
 export func hasInfo(v as Variant, key as string) {
     return maps.has($v.info, $key);
@@ -294,10 +297,10 @@ export func hasInfo(v as Variant, key as string) {
 /**
  * Whether the variant passed every filter.
  *
- * Treats both `PASS` and `.` as passing, matching common caller output.
+ * `PASS`, `.` and an empty FILTER all count as passing.
  *
  * @param v {Variant} the variant
- * @return {bool}
+ * @return {bool} true when passing
  */
 export func passed(v as Variant) {
     return $v.filter == "PASS" or $v.filter == MISSING or len($v.filter) == 0;
@@ -306,12 +309,13 @@ export func passed(v as Variant) {
 /**
  * Whether the variant is a single-nucleotide substitution.
  *
- * True only when the reference and every alternate allele are a single
- * nucleotide. A padding or symbolic reference such as `-` is not an SNV, even
- * when the alternate is a plain base.
+ * True only when the reference and every alternate allele are one of the
+ * upper-case bases A, C, G, T or N. A padding or symbolic reference such as
+ * `-` is not an SNV, even when the alternate is a plain base; lower-case
+ * alleles do not count.
  *
  * @param v {Variant} the variant
- * @return {bool}
+ * @return {bool} true for an SNV
  */
 export func isSnv(v as Variant) {
     if (len($v.ref) != 1 or len($v.alt) == 0 or not isBase($v.ref)) {
@@ -328,10 +332,12 @@ export func isSnv(v as Variant) {
 /**
  * Whether the variant is an insertion or deletion.
  *
- * True when any allele differs in length from the reference.
+ * True when any alternate allele is a plain sequence that differs in length
+ * from the reference. Symbolic (`<DEL>`) and breakend (`A[chr2:123[`) alleles
+ * do not count (see `isSequence`); the `*` allele is not excluded.
  *
  * @param v {Variant} the variant
- * @return {bool}
+ * @return {bool} true for an indel
  */
 export func isIndel(v as Variant) {
     for (def a in $v.alt) {
@@ -348,8 +354,8 @@ export func isIndel(v as Variant) {
  * @param v {Variant} the variant
  * @param sampleIndex {int} zero-based index into the reader's `samples`
  * @param key {string} FORMAT key, e.g. "GT" or "DP"
- * @param fallback {string} value to return when the key or column is absent
- * @return {string}
+ * @param fallback {string} value when the sample, key or trailing field is absent
+ * @return {string} the value, or `fallback`
  */
 export func sampleValue(v as Variant, sampleIndex as int, key as string, fallback as string) {
     if ($sampleIndex < 0 or $sampleIndex >= len($v.samples)) {
@@ -371,20 +377,20 @@ export func sampleValue(v as Variant, sampleIndex as int, key as string, fallbac
  *
  * @param v {Variant} the variant
  * @param sampleIndex {int} zero-based index into the reader's `samples`
- * @return {string} the GT value, e.g. "0/1", or "./." when unavailable
+ * @return {string} the GT value as written, e.g. "0/1" or "1|0"; "./." when absent
  */
 export func genotype(v as Variant, sampleIndex as int) {
     return sampleValue($v, $sampleIndex, "GT", "./.");
 }
 
 /**
- * The reference span of a variant, as a half-open interval.
- *
- * Converts VCF's 1-based POS to the 0-based convention; the interval covers the
- * reference allele.
+ * The reference span of a variant as a 0-based half-open interval:
+ * `pos - 1` to that plus the length of `ref`.
  *
  * @param v {Variant} the variant
- * @return {Interval} the reference range, named by the variant id
+ * @return {Interval} the range, named by the id, QUAL as score (0.0 when
+ *   missing), strand "."
+ * @throws {Error} kind "ngs.intervals" when `pos` is below 1
  */
 export func toInterval(v as Variant) {
     def start as int init $v.pos - 1;
@@ -396,7 +402,8 @@ export func toInterval(v as Variant) {
 }
 
 /**
- * Render a variant back to a VCF record line.
+ * Render a variant as a VCF line. FORMAT is written only when `format` is not
+ * empty; QUAL goes through `convert.toString`, so 60 is written "60.0".
  *
  * @param v {Variant} the variant
  * @return {string} one tab-delimited record, no trailing newline
@@ -434,9 +441,10 @@ export func format(v as Variant) {
 }
 
 /**
- * Render an INFO map back to its column text.
+ * Render an INFO map as column text; an entry with an empty value is written
+ * as a flag.
  *
- * @param entries {map of string to string} INFO keys to values
+ * @param entries {map of string to string} INFO keys to values, in output order
  * @return {string} the INFO column, "." when empty
  */
 export func formatInfo(entries as map of string to string) {
@@ -458,7 +466,7 @@ export func formatInfo(entries as map of string to string) {
  * The `##` meta lines of a captured header.
  *
  * @param head {list of string} header lines from `headerOf`
- * @return {list of string} only the `##` lines
+ * @return {list of string} the `##` lines
  */
 func metaOf(head as list of string) {
     def out as list of string init [];
@@ -496,9 +504,9 @@ func samplesOf(head as list of string) {
 /**
  * Position of a key in the FORMAT list.
  *
- * @param keys {list of string} the FORMAT keys
- * @param key {string} the key to find
- * @return {int} zero-based index, or -1 when absent
+ * @param keys {list of string} FORMAT keys
+ * @param key {string} key to find
+ * @return {int} zero-based index, -1 when absent
  */
 func indexOfKey(keys as list of string, key as string) {
     for (def i in 0..len($keys)) {
@@ -510,21 +518,21 @@ func indexOfKey(keys as list of string, key as string) {
 }
 
 /**
- * Whether a one-character allele is a nucleotide code.
+ * Whether a one-character allele is an upper-case nucleotide code.
  *
  * @param a {string} the allele
- * @return {bool}
+ * @return {bool} true for A, C, G, T and N
  */
 func isBase(a as string) {
     return $a == "A" or $a == "C" or $a == "G" or $a == "T" or $a == "N";
 }
 
 /**
- * Whether an allele is a plain nucleotide sequence rather than a symbolic or
- * breakend allele such as `<DEL>` or `A[chr2:123[`.
+ * Whether an allele is a plain sequence rather than a symbolic or breakend
+ * allele such as `<DEL>` or `A[chr2:123[`. Only `<`, `[` and `]` are checked.
  *
  * @param a {string} the allele
- * @return {bool}
+ * @return {bool} false also for an empty allele
  */
 func isSequence(a as string) {
     if (len($a) == 0) {
@@ -535,12 +543,10 @@ func isSequence(a as string) {
 }
 
 /**
- * Close a source on a path that is already failing.
+ * Close a source on a path that is already failing, without raising.
  *
- * Cleanup that runs while an error is propagating must not raise one of its own.
- *
- * @param s {source.Source} the source to close
- * @return {int} the close result, or -1 when closing itself failed
+ * @param s {source.Source} source to close
+ * @return {int} the close result, -1 when closing itself failed
  */
 func quietClose(s as source.Source) {
     try {

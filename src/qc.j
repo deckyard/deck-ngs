@@ -1,23 +1,20 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
- * Streaming read QC over FASTQ - the FastQC-lite half of the deck.
+ * Streaming read QC over FASTQ, FastQC-lite. One pass gives read and base
+ * counts, the length distribution, GC and N content, the quality-score
+ * histogram, adapter counts and, optionally, per-position mean quality.
  *
- * One pass over the file produces read and base counts, the length
- * distribution, GC and N content, the full quality-score histogram, adapter
- * occurrence counts and (optionally) per-position mean quality.
+ * The interpreter costs roughly a microsecond per step, so the module buffers
+ * a batch of records and counts characters with `core.countIn` (a
+ * `strings.replace` inside Go): one native scan per character class per batch
+ * instead of one step per base. That is about ten times faster than a per-base
+ * loop, with identical numbers.
  *
- * **How it stays fast.** A tree-walking interpreter costs roughly a microsecond
- * per step, so touching every base in Jennifer is what makes naive QC slow. This
- * module instead buffers a batch of records and counts characters with
- * `core.countIn`, which is a `strings.replace` inside Go - one native scan per
- * character class per batch rather than one interpreter step per base. That is
- * about ten times faster than the per-base loop and gives identical numbers.
- *
- * Per-position quality is the one statistic that cannot be expressed as a
- * character count, so `perBase` is opt-in and pairs naturally with `maxReads`.
+ * Per-position quality cannot be expressed as a character count, so `perBase`
+ * is opt-in; combine it with `maxReads`.
  *
  * ```jennifer
  * def opts as qc.Options init qc.options();
@@ -36,55 +33,53 @@ use maps;
 import "./core.j" as core;
 import "./fastq.j" as fastq;
 
-/** Highest Phred score tracked; covers the whole printable ASCII range. */
+/** Size of the quality histogram: Phred 0-93, the printable ASCII range at offset 33. */
 export def const MAX_PHRED as int init 94;
 
-/** Quality score at or above which a base is counted towards Q30. */
+/** Phred score at or above which a base counts towards Q30. */
 export def const Q30 as int init 30;
 
-/** Records buffered before each batch of Go-speed counting. */
+/** Records buffered per counting batch. */
 export def const DEFAULT_BATCH as int init 2000;
 
 /**
- * Bases buffered before a batch is counted, whichever limit is reached first.
+ * Bases buffered per counting batch; a batch is counted when this or
+ * `DEFAULT_BATCH` is reached, whichever comes first.
  *
- * `DEFAULT_BATCH` alone bounds a batch by record count, which is only a memory
- * bound when reads are short. Long-read data breaks that assumption badly: 2000
- * nanopore reads of 30 kb are 60 MB of sequence plus 60 MB of quality, and the
- * joins on top of that pushed one measured run to 657 MB resident. Bounding the
- * batch by bases as well keeps memory flat across read lengths, and costs
- * nothing for short reads, where the record limit is still the one that fires.
+ * A record count bounds memory only for short reads: 2000 nanopore reads of
+ * 30 kb are 60 MB of sequence plus 60 MB of quality, and the joins on top
+ * pushed one measured run to 657 MB resident. The base limit keeps memory flat
+ * across read lengths; for short reads the record limit fires first.
  */
 export def const DEFAULT_BATCH_BASES as int init 4000000;
 
 /** Illumina TruSeq / NEBNext universal adapter prefix. */
 export def const ADAPTER_TRUSEQ as string init "AGATCGGAAGAGC";
 
-/** Nextera / Illumina transposase adapter prefix. */
+/** Nextera (Illumina transposase) adapter prefix. */
 export def const ADAPTER_NEXTERA as string init "CTGTCTCTTATACACATCT";
 
 /** Illumina small-RNA 3' adapter prefix. */
 export def const ADAPTER_SMALL_RNA as string init "TGGAATTCTCGG";
 
-/** Poly-G run, the two-colour-chemistry artefact seen on NovaSeq / NextSeq. */
+/** Poly-G run, the two-colour chemistry artefact of NovaSeq and NextSeq. */
 export def const ARTEFACT_POLY_G as string init "GGGGGGGGGG";
 
 /**
  * How to run an analysis.
  *
- * The zero value is valid and means "every read, no per-position quality,
- * Phred+33"; `options` returns the same thing explicitly.
+ * The zero value is valid: every read, no per-position quality, Phred+33,
+ * the built-in adapters. `options` returns the same explicitly.
  *
- * @field maxReads {int} stop after sampling this many reads; 0 means no limit
- * @field everyNth {int} sample one read in every N; 0 or 1 means every read
+ * @field maxReads {int} stop after sampling this many reads; 0 for no limit
+ * @field everyNth {int} sample one read in every N; 0 or 1 for every read
  * @field perBase {bool} also collect per-position quality (one step per base)
  * @field offset {int} quality encoding, `fastq.PHRED33` or `fastq.PHRED64`;
- *   0 means Phred+33
- * @field batchSize {int} records buffered per counting batch; 0 means the default
- * @field maxBatchBases {int} bases buffered per counting batch, whichever limit
- *   is reached first; 0 means `DEFAULT_BATCH_BASES`. Bounds memory on long-read
- *   data, where a record count does not
- * @field adapters {list of string} sequences to count; empty means the built-in set
+ *   0 for Phred+33
+ * @field batchSize {int} records per counting batch; 0 for `DEFAULT_BATCH`
+ * @field maxBatchBases {int} bases per counting batch; 0 for
+ *   `DEFAULT_BATCH_BASES`
+ * @field adapters {list of string} sequences to count; empty for `defaultAdapters`
  */
 export def struct Options {
     maxReads as int,
@@ -99,17 +94,17 @@ export def struct Options {
 /**
  * Everything one pass measured.
  *
- * @field reads {int} records seen in the file
- * @field sampled {int} records actually measured, after subsampling
+ * @field reads {int} records read, including those skipped by `everyNth`
+ * @field sampled {int} records measured
  * @field bases {int} bases in the sampled records
  * @field minLength {int} shortest sampled read, 0 when nothing was sampled
  * @field maxLength {int} longest sampled read
- * @field gcBases {int} G and C bases in the sampled records
- * @field nBases {int} ambiguous (N) bases in the sampled records
- * @field qualHist {list of int} count of bases per Phred score, indexed 0..93
+ * @field gcBases {int} G and C bases, either case
+ * @field nBases {int} N bases, either case
+ * @field qualHist {list of int} bases per Phred score, indexed 0-93
  * @field lengthHist {map of int to int} read length to number of reads
- * @field adapterHits {map of string to int} adapter sequence to occurrences
- * @field perBaseSum {list of int} total quality per position, `perBase` only
+ * @field adapterHits {map of string to int} probe sequence to occurrences
+ * @field perBaseSum {list of int} summed quality per position, `perBase` only
  * @field perBaseCount {list of int} bases seen per position, `perBase` only
  */
 export def struct Report {
@@ -128,9 +123,10 @@ export def struct Report {
 };
 
 /**
- * Default analysis options: every read, no per-position quality, Phred+33.
+ * Default analysis options: every read, no per-position quality, Phred+33,
+ * the built-in adapters.
  *
- * @return {Options} a fresh, explicitly populated option set
+ * @return {Options} an explicitly populated option set
  */
 export func options() {
     def adapters as list of string init [];
@@ -146,9 +142,10 @@ export func options() {
 }
 
 /**
- * The adapters and artefacts counted when `Options.adapters` is empty.
+ * The probes counted when `Options.adapters` is empty; also the default
+ * adapter set of `trim.options`.
  *
- * @return {list of string} the built-in probe sequences
+ * @return {list of string} TruSeq, Nextera, small-RNA and poly-G probes
  */
 export func defaultAdapters() {
     return [ADAPTER_TRUSEQ, ADAPTER_NEXTERA, ADAPTER_SMALL_RNA, ARTEFACT_POLY_G];
@@ -157,14 +154,17 @@ export func defaultAdapters() {
 /**
  * Run a single streaming pass over a FASTQ file.
  *
- * Per-record work is kept to plain local counters and buffered strings; the
- * character scanning happens once per batch. Nothing proportional to the file
- * size is ever held in memory.
+ * Memory is bounded by one batch, not by the file. Adapter probes are counted
+ * per batch with records joined by newlines, so a probe never matches across
+ * two reads. The reader is closed with `close`, so a truncated gzip input is
+ * not reported.
  *
  * @param path {string} `.fastq`, `.fq` or gzipped equivalent
  * @param opts {Options} what to measure; the zero value is valid
  * @return {Report} the collected statistics
- * @throws {Error} when the file is missing or a record is malformed
+ * @throws {Error} kind "ngs.source" when the file is missing; kind "ngs.fastq"
+ *   on a malformed record; kind "ngs.qc" when a quality character decodes
+ *   outside Phred 0-93 (usually the wrong offset)
  */
 export func analyze(path as string, opts as Options) {
     def cfg as Options init normalize($opts);
@@ -246,7 +246,7 @@ export func analyze(path as string, opts as Options) {
 /**
  * Mean Phred quality across every sampled base.
  *
- * @param rep {Report} a completed report
+ * @param rep {Report} completed report
  * @return {float} mean quality, 0.0 when nothing was sampled
  */
 export func meanQuality(rep as Report) {
@@ -263,7 +263,7 @@ export func meanQuality(rep as Report) {
 /**
  * Percentage of sampled bases at Q30 or better.
  *
- * @param rep {Report} a completed report
+ * @param rep {Report} completed report
  * @return {float} percentage in [0, 100], 0.0 when nothing was sampled
  */
 export func q30Percent(rep as Report) {
@@ -280,7 +280,7 @@ export func q30Percent(rep as Report) {
 /**
  * G+C content of the sampled bases as a percentage.
  *
- * @param rep {Report} a completed report
+ * @param rep {Report} completed report
  * @return {float} percentage in [0, 100], 0.0 when nothing was sampled
  */
 export func gcPercent(rep as Report) {
@@ -293,7 +293,7 @@ export func gcPercent(rep as Report) {
 /**
  * Mean sampled read length.
  *
- * @param rep {Report} a completed report
+ * @param rep {Report} completed report
  * @return {float} mean length, 0.0 when nothing was sampled
  */
 export func meanLength(rep as Report) {
@@ -306,8 +306,9 @@ export func meanLength(rep as Report) {
 /**
  * Mean quality at each read position.
  *
- * @param rep {Report} a report collected with `perBase` enabled
- * @return {list of float} mean quality per position, empty when `perBase` was off
+ * @param rep {Report} report collected with `perBase` on
+ * @return {list of float} mean quality per 0-based position, empty when
+ *   `perBase` was off
  */
 export func perBaseMean(rep as Report) {
     def out as list of float init [];
@@ -322,9 +323,10 @@ export func perBaseMean(rep as Report) {
 }
 
 /**
- * Render a report as a human-readable text summary.
+ * Render a report as text: counts, length range, GC, N, mean quality, Q30
+ * and one line per adapter probe.
  *
- * @param rep {Report} a completed report
+ * @param rep {Report} completed report
  * @return {string} a multi-line report, newline-terminated
  */
 export func summary(rep as Report) {
@@ -349,8 +351,8 @@ export func summary(rep as Report) {
 }
 
 /**
- * The batch-level accumulators, kept apart from `Report` so the hot per-record
- * path never copies a whole report.
+ * Batch-level accumulators, kept apart from `Report` so the per-record path
+ * never copies a whole report.
  *
  * @field bases {int} bases counted so far
  * @field gcBases {int} G and C bases counted so far
@@ -415,7 +417,7 @@ func emptyTally(cfg as Options) {
  *
  * @param ordinal {int} 1-based position of the record in the file
  * @param cfg {Options} normalized options
- * @return {bool}
+ * @return {bool} true for records 1, 1 + N, 1 + 2N, ...
  */
 func sampleThis(ordinal as int, cfg as Options) {
     return ($ordinal - 1) % $cfg.everyNth == 0;
@@ -454,15 +456,15 @@ func addBatch(t as Tally, seqs as list of string, quals as list of string, cfg a
 /**
  * Add a batch of quality characters to the score histogram.
  *
- * Scans one Phred score at a time and stops as soon as every character in the
- * batch is accounted for, so a typical Illumina batch costs about forty native
- * passes rather than the full printable-ASCII range.
+ * Scans one Phred score at a time and stops once every character is
+ * accounted for, so a typical Illumina batch costs about forty native passes
+ * instead of 94.
  *
- * @param hist {list of int} the histogram so far
+ * @param hist {list of int} histogram so far
  * @param chunk {string} concatenated quality strings
  * @param offset {int} quality encoding offset
  * @return {list of int} the updated histogram
- * @throws {Error} when a character decodes to a score outside the tracked range
+ * @throws {Error} kind "ngs.qc" when a character decodes outside Phred 0-93
  */
 func tallyQuality(hist as list of int, chunk as string, offset as int) {
     def out as list of int init $hist;
@@ -485,14 +487,12 @@ func tallyQuality(hist as list of int, chunk as string, offset as int) {
 }
 
 /**
- * Close a reader on a path that is already failing.
+ * Close a reader on a path that is already failing, without raising: a
+ * deferred throw would supersede the pending error and replace the real
+ * diagnosis with a complaint about the handle.
  *
- * Cleanup that runs while an error is propagating must not raise one of its own:
- * a deferred throw supersedes the pending error, which would replace the real
- * diagnosis with a complaint about an already-closed handle.
- *
- * @param r {fastq.Reader} the reader to close
- * @return {int} the close result, or -1 when closing itself failed
+ * @param r {fastq.Reader} reader to close
+ * @return {int} the close result, -1 when closing itself failed
  */
 func quietClose(r as fastq.Reader) {
     try {

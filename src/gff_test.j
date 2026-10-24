@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 /**
  * White-box tests for the GFF3 / GTF reader.
@@ -121,4 +121,33 @@ func testLeavesSpacesUnescaped() {
     def back as map of string to string init parseAttributes($text);
     testing.assertEqual($back["Note"], "two words");
     testing.assertEqual($back["ID"], "a;b");
+}
+
+func testNamePrefersNameThenGeneNameThenIdentifier() {
+    def both as Feature init parse("chr1\t.\tgene\t1\t9\t.\t+\t.\tID=g1;Name=BRCA2");
+    testing.assertEqual(name($both), "BRCA2");
+    def gtf as Feature init parse(
+        "chr1\t.\texon\t1\t9\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\"; gene_name \"TP53\";");
+    testing.assertEqual(name($gtf), "TP53");
+    def idOnly as Feature init parse("chr1\t.\tgene\t1\t9\t.\t+\t.\tID=g7");
+    testing.assertEqual(name($idOnly), "g7");
+    def tx as string init "gene_id \"G1\"; transcript_id \"T1\";";
+    def txOnly as Feature init parse("chr1\t.\texon\t1\t9\t.\t+\t.\t" + $tx);
+    testing.assertEqual(name($txOnly), "T1");
+    def bare as Feature init parse("chr1\t.\tregion\t1\t9\t.\t+\t.\t.");
+    testing.assertEqual(name($bare), "");
+}
+
+func testOpenStdinWrapsTheStdinSource() {
+    # Opened and closed without reading: the test runner's stdin is not ours.
+    # A stdin that cannot be reopened (a socket gives ENXIO) leaves nothing to
+    # check here.
+    def r as Reader;
+    try {
+        $r = openStdin();
+    } catch (e) {
+        return;
+    }
+    testing.assertEqual($r.src.origin, "<stdin>");
+    testing.assertEqual(close($r), 0);
 }

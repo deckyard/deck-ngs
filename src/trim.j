@@ -1,25 +1,24 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
- * Read trimming, filtering and subsampling over FASTQ - the fastp-lite half of
- * the deck's preprocessing.
+ * Read trimming, filtering and subsampling over FASTQ, fastp-lite.
  *
- * Every entry point streams: `run` reads one record, transforms it and writes it
- * out, so a 50 GB input needs no more memory than a 50 MB one. Output is
- * gzipped automatically when the target name ends in `.gz`.
+ * `run`, `subsampleEvery` and `subsampleFraction` stream one record at a time,
+ * so memory does not grow with the input. Output is gzipped when the target
+ * name ends in `.gz`. All three refuse an output that is the same file as the
+ * input.
  *
- * The trimming steps run in the same order fastp uses, each one exposed on its
- * own so a pipeline can apply just the parts it wants:
+ * The trimming steps run in fastp's order, each also exported on its own:
  *
  * 1. fixed clipping from either end (`clipFixed`)
  * 2. adapter removal from the 3' end (`clipAdapters`)
  * 3. sliding-window quality trimming (`clipQuality`)
  * 4. length capping (`truncate`)
  *
- * Filtering (`keeps`) is then applied to the trimmed record: minimum length,
- * maximum ambiguous bases, minimum mean quality.
+ * The filters (`keeps`) then apply to the trimmed record: minimum length,
+ * maximum N bases, minimum mean quality.
  *
  * @module trim
  * @since 0.1.0
@@ -32,7 +31,7 @@ import "./source.j" as source;
 import "./fastq.j" as fastq;
 import "./qc.j" as qc;
 
-/** Default sliding window width for quality trimming. */
+/** Default sliding window width for quality trimming, in bases. */
 export def const DEFAULT_WINDOW as int init 4;
 
 /** Shortest partial adapter match accepted at a read's 3' end. */
@@ -41,25 +40,26 @@ export def const DEFAULT_OVERLAP as int init 6;
 /**
  * How to trim and filter.
  *
- * The zero value is a no-op: it trims nothing and keeps everything, so you can
- * enable one behaviour at a time.
+ * The zero value trims nothing and applies no filter except `maxAmbiguous`
+ * 0, which drops every read holding an N; set `maxAmbiguous` to -1 to disable
+ * it. `options` returns the recommended defaults.
  *
  * @field trimFront {int} bases to remove from the 5' end
  * @field trimTail {int} bases to remove from the 3' end
- * @field adapters {list of string} adapters to clip; empty disables adapter
- *   clipping, `qc.defaultAdapters()` enables the built-in set
+ * @field adapters {list of string} adapters to clip; empty disables clipping,
+ *   `qc.defaultAdapters()` is the built-in set
  * @field minOverlap {int} shortest partial adapter accepted at the 3' end;
- *   0 means `DEFAULT_OVERLAP`
- * @field qualityThreshold {int} sliding-window mean quality below which the read
- *   is cut; 0 disables quality trimming
- * @field windowSize {int} sliding window width; 0 means `DEFAULT_WINDOW`
- * @field maxLength {int} truncate reads longer than this; 0 means no cap
- * @field minLength {int} discard reads shorter than this after trimming
- * @field maxAmbiguous {int} discard reads with more than this many N bases;
- *   -1 disables the check
- * @field minMeanQuality {int} discard reads whose mean quality is below this;
+ *   0 for `DEFAULT_OVERLAP`
+ * @field qualityThreshold {int} sliding-window mean Phred quality below which
+ *   the read is cut; 0 disables quality trimming
+ * @field windowSize {int} sliding window width; 0 for `DEFAULT_WINDOW`
+ * @field maxLength {int} cap on read length; 0 for no cap
+ * @field minLength {int} shortest read kept after trimming; 0 keeps all
+ * @field maxAmbiguous {int} most N bases a kept read may hold; -1 disables the
+ *   check, 0 drops any read with an N
+ * @field minMeanQuality {int} lowest mean Phred quality a kept read may have;
  *   0 disables the check
- * @field offset {int} quality encoding; 0 means `fastq.PHRED33`
+ * @field offset {int} quality encoding; 0 for `fastq.PHRED33`
  */
 export def struct Options {
     trimFront as int,
@@ -78,15 +78,18 @@ export def struct Options {
 /**
  * What a run did.
  *
+ * A record dropped for several reasons is counted under the first that
+ * applies, in the order `tooShort`, `tooAmbiguous`, `lowQuality`.
+ *
  * @field readsIn {int} records read
  * @field readsOut {int} records written
  * @field basesIn {int} bases read
  * @field basesOut {int} bases written
  * @field adapterTrimmed {int} records shortened by adapter clipping
  * @field qualityTrimmed {int} records shortened by quality trimming
- * @field tooShort {int} records discarded for being shorter than `minLength`
- * @field tooAmbiguous {int} records discarded for exceeding `maxAmbiguous`
- * @field lowQuality {int} records discarded for failing `minMeanQuality`
+ * @field tooShort {int} records dropped by `minLength`
+ * @field tooAmbiguous {int} records dropped by `maxAmbiguous`
+ * @field lowQuality {int} records dropped by `minMeanQuality`
  */
 export def struct Stats {
     readsIn as int,
@@ -101,8 +104,9 @@ export def struct Stats {
 };
 
 /**
- * Default options: adapter clipping on, sliding-window quality trimming at Q20,
- * and reads shorter than 25 bases discarded.
+ * Recommended options: built-in adapters with `DEFAULT_OVERLAP`, sliding-window
+ * quality trimming at Q20 over `DEFAULT_WINDOW` bases, reads under 25 bases
+ * dropped, no N limit, Phred+33.
  *
  * @return {Options} a populated option set to adjust and pass to `run`
  */
@@ -123,14 +127,17 @@ export func options() {
 }
 
 /**
- * Stream a FASTQ file through trimming and filtering into a new file.
+ * Stream a FASTQ file through `trimRead` and the filters into a new file.
+ *
+ * The input is closed with `close`, so a truncated gzip input is not reported.
  *
  * @param inPath {string} input FASTQ, optionally gzipped
  * @param outPath {string} output FASTQ; gzipped when the name ends in `.gz`
- * @param opts {Options} what to trim and filter; the zero value is a no-op copy
+ * @param opts {Options} what to trim and filter; see `Options` for the zero value
  * @return {Stats} what the run did
- * @throws {Error} when either file cannot be opened, when the compressor fails,
- *   or when `inPath` and `outPath` are the same file
+ * @throws {Error} kind "ngs.trim" when `inPath` and `outPath` are the same file
+ *   or the compressor exits non-zero; as `fastq.open`, `fastq.next` and
+ *   `source.create` otherwise
  */
 export func run(inPath as string, outPath as string, opts as Options) {
     if (core.sameFile($inPath, $outPath)) {
@@ -195,9 +202,9 @@ export func run(inPath as string, outPath as string, opts as Options) {
 }
 
 /**
- * Apply every configured trimming step to one record.
+ * Apply every configured trimming step to one record; no filtering.
  *
- * @param rec {Read} the record to trim
+ * @param rec {Read} record to trim
  * @param opts {Options} what to trim; the zero value returns the record unchanged
  * @return {Read} the trimmed record, possibly empty
  */
@@ -213,7 +220,7 @@ export func trimRead(rec as fastq.Read, opts as Options) {
  * Remove a fixed number of bases from each end.
  *
  * @param rec {Read} the record
- * @param front {int} bases to remove from the 5' end
+ * @param front {int} bases to remove from the 5' end; negative counts as 0
  * @param tail {int} bases to remove from the 3' end
  * @return {Read} the clipped record, empty when the cuts overlap
  */
@@ -237,17 +244,14 @@ export func clipFixed(rec as fastq.Read, front as int, tail as int) {
 }
 
 /**
- * Clip the read at the first adapter occurrence, including a partial adapter
- * running off the 3' end.
- *
- * A full internal match is found with a native substring scan; a partial match
- * is found by testing adapter prefixes against the read's suffix, longest first,
- * down to `minOverlap` bases.
+ * Clip the read at the earliest adapter start (see `adapterStart`), keeping
+ * the 5' part.
  *
  * @param rec {Read} the record
  * @param adapters {list of string} adapter sequences; empty disables clipping
- * @param minOverlap {int} shortest partial adapter accepted at the 3' end
- * @return {Read} the record clipped at the earliest adapter start
+ * @param minOverlap {int} shortest partial adapter accepted at the 3' end; 0
+ *   or less for `DEFAULT_OVERLAP`
+ * @return {Read} the clipped record, unchanged when no adapter is found
  */
 export func clipAdapters(rec as fastq.Read, adapters as list of string, minOverlap as int) {
     if (len($adapters) == 0 or len($rec.seq) == 0) {
@@ -263,10 +267,16 @@ export func clipAdapters(rec as fastq.Read, adapters as list of string, minOverl
 /**
  * The earliest position at which an adapter starts in a sequence.
  *
- * @param seq {string} the sequence to scan
+ * Each adapter is first searched as an exact substring anywhere in the read
+ * (a native scan); failing that, its prefixes are tested against the read's
+ * 3' end, longest first, down to `minOverlap` bases. Matching is exact and
+ * case-sensitive, with no mismatches allowed.
+ *
+ * @param seq {string} sequence to scan
  * @param adapters {list of string} adapter sequences
- * @param minOverlap {int} shortest partial adapter accepted at the 3' end
- * @return {int} zero-based cut position, or -1 when no adapter is present
+ * @param minOverlap {int} shortest partial adapter accepted at the 3' end; 0
+ *   or less for `DEFAULT_OVERLAP`
+ * @return {int} zero-based cut position, -1 when no adapter is found
  */
 export func adapterStart(seq as string, adapters as list of string, minOverlap as int) {
     def overlap as int init $minOverlap;
@@ -289,13 +299,14 @@ export func adapterStart(seq as string, adapters as list of string, minOverlap a
 /**
  * Trim the 3' end where a sliding window's mean quality falls below a threshold.
  *
- * This is the Trimmomatic / fastp sliding-window rule: scan windows from the 5'
- * end and cut at the first window whose mean quality is too low.
+ * The Trimmomatic / fastp sliding-window rule: scan windows from the 5' end
+ * and cut at the start of the first window whose mean quality is below the
+ * threshold.
  *
  * @param rec {Read} the record
  * @param threshold {int} mean Phred quality a window must reach; 0 disables
- * @param window {int} window width; 0 means `DEFAULT_WINDOW`
- * @param offset {int} quality encoding offset
+ * @param window {int} window width; 0 for `DEFAULT_WINDOW`
+ * @param offset {int} quality encoding offset, e.g. `fastq.PHRED33`
  * @return {Read} the trimmed record
  */
 export func clipQuality(rec as fastq.Read, threshold as int, window as int, offset as int) {
@@ -312,9 +323,11 @@ export func clipQuality(rec as fastq.Read, threshold as int, window as int, offs
 /**
  * How many bases survive sliding-window quality trimming.
  *
- * @param qual {string} the raw quality string
+ * A window wider than the read shrinks to the read length.
+ *
+ * @param qual {string} raw quality string
  * @param threshold {int} mean Phred quality a window must reach
- * @param window {int} window width; 0 means `DEFAULT_WINDOW`
+ * @param window {int} window width; 0 for `DEFAULT_WINDOW`
  * @param offset {int} quality encoding offset
  * @return {int} number of bases to keep from the 5' end
  */
@@ -352,7 +365,7 @@ export func qualityKeepLength(qual as string, threshold as int, window as int, o
  * Cap a record's length, keeping the 5' end.
  *
  * @param rec {Read} the record
- * @param maxLength {int} maximum length; 0 or less means no cap
+ * @param maxLength {int} maximum length; 0 or less for no cap
  * @return {Read} the capped record
  */
 export func truncate(rec as fastq.Read, maxLength as int) {
@@ -363,10 +376,11 @@ export func truncate(rec as fastq.Read, maxLength as int) {
 }
 
 /**
- * Whether a trimmed record passes the configured filters.
+ * Whether a trimmed record passes `minLength`, `maxAmbiguous` and
+ * `minMeanQuality`.
  *
- * @param rec {Read} the trimmed record
- * @param opts {Options} the filters to apply
+ * @param rec {Read} trimmed record
+ * @param opts {Options} filters to apply; see `Options` for the zero value
  * @return {bool} true when the record should be kept
  */
 export func keeps(rec as fastq.Read, opts as Options) {
@@ -386,16 +400,17 @@ export func keeps(rec as fastq.Read, opts as Options) {
 /**
  * Copy every Nth record of a FASTQ file to a new file.
  *
- * Deterministic and reproducible - the usual way to cut a large run down to a
- * test-sized sample.
+ * Deterministic: keeps records 1, 1 + N, 1 + 2N, ... The input is closed with
+ * `close`, so a truncated gzip input is not reported.
  *
  * @param inPath {string} input FASTQ, optionally gzipped
  * @param outPath {string} output FASTQ; gzipped when the name ends in `.gz`
  * @param everyNth {int} keep one read in every N; 1 or less keeps every read
- * @param maxReads {int} stop after writing this many reads; 0 means no limit
- * @return {Stats} counts of what was read and written
- * @throws {Error} when either file cannot be opened, or when `inPath` and
- *   `outPath` are the same file
+ * @param maxReads {int} stop after writing this many reads; 0 for no limit
+ * @return {Stats} read and written counts; the trimming counters stay 0
+ * @throws {Error} kind "ngs.trim" when `inPath` and `outPath` are the same file
+ *   or the compressor exits non-zero; as `fastq.open` and `source.create`
+ *   otherwise
  */
 export func subsampleEvery(inPath as string, outPath as string, everyNth as int, maxReads as int) {
     if (core.sameFile($inPath, $outPath)) {
@@ -444,14 +459,17 @@ export func subsampleEvery(inPath as string, outPath as string, everyNth as int,
 /**
  * Copy a random fraction of a FASTQ file to a new file.
  *
- * Seed the generator with `math.randSeed` first for a reproducible sample.
+ * Each read is kept independently with probability `fraction`, using
+ * `math.rand`; seed it with `math.randSeed` first for a reproducible sample.
+ * The input is closed with `close`, so a truncated gzip input is not reported.
  *
  * @param inPath {string} input FASTQ, optionally gzipped
  * @param outPath {string} output FASTQ; gzipped when the name ends in `.gz`
  * @param fraction {float} probability of keeping each read, in (0, 1]
- * @return {Stats} counts of what was read and written
- * @throws {Error} when the fraction is out of range, a file cannot be opened, or
- *   `inPath` and `outPath` are the same file
+ * @return {Stats} read and written counts; the trimming counters stay 0
+ * @throws {Error} kind "ngs.trim" when `fraction` is outside (0, 1], `inPath`
+ *   and `outPath` are the same file, or the compressor exits non-zero; as
+ *   `fastq.open` and `source.create` otherwise
  */
 export func subsampleFraction(inPath as string, outPath as string, fraction as float) {
     if ($fraction <= 0.0 or $fraction > 1.0) {
@@ -497,7 +515,8 @@ export func subsampleFraction(inPath as string, outPath as string, fraction as f
  * Fill in the zero value's implicit defaults.
  *
  * @param opts {Options} caller-supplied options
- * @return {Options} the same options with 0 fields resolved to their defaults
+ * @return {Options} the options with `offset`, `windowSize` and `minOverlap`
+ *   defaults filled in
  */
 func normalize(opts as Options) {
     def cfg as Options init $opts;
@@ -514,10 +533,10 @@ func normalize(opts as Options) {
 }
 
 /**
- * Record why a trimmed read was discarded, and count it if it was kept.
+ * Count a trimmed read as kept, or under the first filter that drops it.
  *
- * @param st {Stats} the statistics so far
- * @param rec {Read} the trimmed record
+ * @param st {Stats} statistics so far
+ * @param rec {Read} trimmed record
  * @param cfg {Options} normalized options
  * @return {Stats} the updated statistics
  */
@@ -547,7 +566,7 @@ func judge(st as Stats, rec as fastq.Read, cfg as Options) {
  * @param kept {int} records written
  * @param basesIn {int} bases read
  * @param basesOut {int} bases written
- * @return {Stats}
+ * @return {Stats} the counts, every trimming counter 0
  */
 func countsOnly(seen as int, kept as int, basesIn as int, basesOut as int) {
     return Stats{
@@ -564,12 +583,13 @@ func countsOnly(seen as int, kept as int, basesIn as int, basesOut as int) {
 }
 
 /**
- * Position of the longest adapter prefix that matches the read's suffix.
+ * Position of the longest proper adapter prefix that matches the read's 3'
+ * end.
  *
  * @param seq {string} the sequence
  * @param probe {string} the adapter
  * @param overlap {int} shortest prefix accepted
- * @return {int} zero-based cut position, or -1 when nothing matches
+ * @return {int} zero-based cut position, -1 when nothing matches
  */
 func partialAt(seq as string, probe as string, overlap as int) {
     def longest as int init len($probe) - 1;
@@ -587,13 +607,11 @@ func partialAt(seq as string, probe as string, overlap as int) {
 }
 
 /**
- * Close a reader on a path that is already failing.
+ * Close a reader on a path that is already failing, without raising: a
+ * deferred throw would supersede the pending error.
  *
- * Cleanup that runs while an error is propagating must not raise one of its own:
- * a deferred throw supersedes the pending error.
- *
- * @param r {fastq.Reader} the reader to close
- * @return {int} the close result, or -1 when closing itself failed
+ * @param r {fastq.Reader} reader to close
+ * @return {int} the close result, -1 when closing itself failed
  */
 func quietClose(r as fastq.Reader) {
     try {
@@ -604,10 +622,10 @@ func quietClose(r as fastq.Reader) {
 }
 
 /**
- * Close a sink on a path that is already failing.
+ * Close a sink on a path that is already failing, without raising.
  *
- * @param k {source.Sink} the sink to close
- * @return {int} the close result, or -1 when closing itself failed
+ * @param k {source.Sink} sink to close
+ * @return {int} the close result, -1 when closing itself failed
  */
 func quietCloseSink(k as source.Sink) {
     try {

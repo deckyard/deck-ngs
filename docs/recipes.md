@@ -1,17 +1,15 @@
 # Recipes
 
-Worked solutions to the things people actually do. Every one of these streams,
-so the input size does not change the memory used.
-
-Each recipe uses deck-style imports; the runnable versions in the repository's
-`examples/` directory use relative paths so they work from a checkout.
+Only the first recipe shows its imports; the others import each module they use
+the same way. The runnable programs in `examples/` import from `../src/` instead.
+Unless a recipe says otherwise, memory does not grow with the input.
 
 ## Convert FASTQ to FASTA
 
 ```jennifer
 use io;
-import "@jennifer/ngs/fastq.j" as fastq;
-import "@jennifer/ngs/source.j" as source;
+import "@deckyard/ngs/fastq.j" as fastq;
+import "@deckyard/ngs/source.j" as source;
 
 def r as fastq.Reader init fastq.open("in.fastq.gz");
 def k as source.Sink init source.create("out.fasta.gz");
@@ -24,7 +22,7 @@ source.closeSink($k);
 
 ## Filter reads by length and quality
 
-When the built-in `trim.run` filters are not the ones you want:
+For filters `trim.run` does not offer:
 
 ```jennifer
 def r as fastq.Reader init fastq.open("in.fastq.gz");
@@ -84,8 +82,8 @@ for (def i in 0..len($sorted)) {
 }
 ```
 
-Results from `countOverlaps` and `coverage` align with `intervals.sort(peaks)`,
-not with the input order - hence sorting the peaks alongside them.
+`countOverlaps` and `coverage` return results in the order of
+`intervals.sort(peaks)`, not the input order, so the loop walks the sorted list.
 
 ## Which parts of my peaks are intergenic?
 
@@ -98,7 +96,7 @@ io.printf("%d intergenic pieces, %d bp\n",
 
 ## Promoters from gene annotation
 
-The 2 kb upstream of each gene, strand-aware:
+The 2 kb upstream of each gene, by strand:
 
 ```jennifer
 def promoters as list of intervals.Interval init [];
@@ -132,7 +130,11 @@ def going as bool init true;
 while ($going) {
     def step as sam.Next init sam.next($r);
     match ($step) {
-        when Alignment(hit) { $covered[] = collect($hit.value); }
+        when Alignment(hit) {
+            if (not sam.isUnmapped($hit.value)) {
+                $covered[] = sam.toInterval($hit.value);
+            }
+        }
         when Done { $going = false; }
     }
 }
@@ -142,23 +144,24 @@ def gaps as list of intervals.Interval init intervals.complement($covered, $size
 bed.writeAll("uncovered.bed", $gaps);
 ```
 
-Building the list of alignments only works while it fits in memory. For a real
-BAM, let `samtools depth` produce the coverage and parse that instead.
+`sam.toInterval` raises on an unmapped record, hence the filter. The list of
+alignments has to fit in memory; for a real BAM, parse `samtools depth` output
+instead.
 
 ## Read BAM through samtools
 
-The deck reads SAM, not BAM. `samtools` bridges the gap, and
-[stdin support](formats.md#two-cursor-shapes) means nothing hits the disk:
+The deck reads SAM, not BAM. Piping `samtools view` into the program keeps the
+SAM off the disk:
 
 ```sh
 samtools view -h aln.bam | jennifer run myscript.j -
 ```
 
 ```jennifer
-def r as sam.Reader init sam.openStdin();
+def r as sam.Reader init sam.openStdin();   # header is empty on stdin
 ```
 
-Or drive it from inside the program:
+Or run `samtools` from the program, through a file:
 
 ```jennifer
 def j as pipeline.Job init pipeline.shell("extract",
@@ -191,7 +194,7 @@ func emit(v as vcf.Variant) {
 }
 ```
 
-## Genotype counts per sample
+## Genotype counts across samples
 
 ```jennifer
 def r as vcf.Reader init vcf.open("calls.vcf.gz");
@@ -209,8 +212,8 @@ for (def i in 0..len($r.samples)) {
 
 ## A per-sample pipeline
 
-The shape `examples/pipeline.j` demonstrates: QC and trim in-process, then fan
-the external step out across cores.
+The shape of `examples/pipeline.j`: trim in-process, then fan the external
+step out across cores.
 
 ```jennifer
 pipeline.requireTools(["bwa", "samtools"]);
@@ -242,5 +245,5 @@ io.printf("%s", pipeline.summary($results));
 pipeline.checkAll($results);
 ```
 
-Because each job declares its inputs and outputs, re-running the program after a
-crash skips everything that already finished.
+Each job declares its inputs and outputs, so re-running after a crash skips the
+jobs that finished. The trimming stage has no such check and runs again.

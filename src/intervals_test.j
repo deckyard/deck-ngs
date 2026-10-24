@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
@@ -177,4 +177,43 @@ func testInvertedIntervalFails() {
 
 func buildInverted() {
     return make("chr1", 50, 10);
+}
+
+func testIntersectionKeepsTheSharedBasesAndANames() {
+    def a as Interval init named("chr1", 10, 50, "a", 3.0, "+");
+    def b as Interval init named("chr1", 30, 80, "b", 9.0, "-");
+    def x as Interval init intersection($a, $b);
+    testing.assertEqual($x.chrom, "chr1");
+    testing.assertEqual($x.start, 30);
+    testing.assertEqual($x.end, 50);
+    testing.assertEqual($x.name, "a");
+    testing.assertEqual($x.score, 3.0);
+    testing.assertEqual($x.strand, "+");
+    def inner as Interval init intersection($b, iv("chr1", 40, 45));
+    testing.assertEqual(length($inner), 5);
+    testing.assertEqual($inner.name, "b");
+}
+
+func testIntersectionOfBookendedIntervalsFails() {
+    testing.assertThrows("intersectBookended", "ngs.intervals");
+    testing.assertThrows("intersectAcrossChromosomes", "ngs.intervals");
+}
+
+func intersectBookended() {
+    return intersection(iv("chr1", 10, 50), iv("chr1", 50, 60));
+}
+
+func intersectAcrossChromosomes() {
+    return intersection(iv("chr1", 10, 50), iv("chr2", 10, 50));
+}
+
+func testSortKeyPadsCoordinatesToKeyWidth() {
+    testing.assertEqual(sortKey(iv("chr1", 10, 50)), "chr1\t000000000010\t000000000050");
+    # Padding is what makes 9 sort before 10 as text.
+    testing.assertEqual(sortKey(iv("chr1", 9, 50)) < sortKey(iv("chr1", 10, 50)), true);
+    testing.assertEqual(sortKey(iv("chr1", 10, 9000)) < sortKey(iv("chr1", 10, 10000)), true);
+}
+
+func testToBed3() {
+    testing.assertEqual(toBed3(named("chrX", 0, 155270560, "x", 1.0, "-")), "chrX\t0\t155270560");
 }

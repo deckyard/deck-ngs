@@ -1,9 +1,9 @@
 # Reading and writing formats
 
-Five formats, one shape: open a cursor, pull records, close it. Every reader
-streams, decompresses gzip transparently, and can read standard input.
+Every reader is opened the same way, streams, decompresses gzip transparently
+and can read standard input.
 
-| module | format | record type | coordinates |
+| module | format | record type | coordinates as stored |
 | --- | --- | --- | --- |
 | `fastq` | FASTQ | `fastq.Read` | n/a |
 | `bed` | BED | `intervals.Interval` | 0-based, half-open |
@@ -11,13 +11,13 @@ streams, decompresses gzip transparently, and can read standard input.
 | `sam` | SAM | `sam.Record` | 1-based (`pos`) |
 | `vcf` | VCF | `vcf.Variant` | 1-based (`pos`) |
 
-Records keep their file's native coordinates. See
-[Coordinate systems](coordinates.md) before mixing them.
+Records keep their file's coordinates; [Coordinate systems](coordinates.md)
+covers converting them.
 
 ## Two cursor shapes
 
-FASTQ has no comment lines: every record is exactly four lines, so
-`hasNext`/`next` works and reads naturally.
+FASTQ has no comment lines and every record is four lines, so its reader uses
+`hasNext` / `next`:
 
 ```jennifer
 def r as fastq.Reader init fastq.open("reads.fastq.gz");
@@ -28,15 +28,12 @@ while (fastq.hasNext($r)) {
 fastq.closeStrict($r);
 ```
 
-The tab-delimited formats can carry comments, headers and directives *between*
-records - a `track` line in BED, a `###` directive or a trailing `##FASTA`
-section in GFF3. Skipping those can consume the last line of the file, which a
-`hasNext` peek cannot express: it would have to answer "is there another record"
-without reading, and a reader cannot un-read a line
-([why](streaming.md#value-semantics-and-handles)).
-
-So those cursors report end-of-stream through an enum, which `match` checks
-exhaustively:
+The tab-delimited formats can carry comments, headers and directives between
+records: a `track` line in BED, a `###` directive or a trailing `##FASTA`
+section in GFF3. Skipping them can consume the last line of the file, and a
+reader cannot un-read a line ([why](streaming.md#value-semantics-and-handles)),
+so a `hasNext` peek cannot answer correctly. These readers return a `Next` enum
+instead:
 
 ```jennifer
 def r as bed.Reader init bed.open("peaks.bed");
@@ -51,16 +48,14 @@ while ($going) {
 bed.closeStrict($r);
 ```
 
-The `match` subject must be a variable of the enum type - `match (bed.next($r))`
-is rejected, because the subject has to be statically an enum.
-
-The variant name differs per module, since the payload does: `bed.Next.Feature`,
-`gff.Next.Record`, `sam.Next.Alignment`, `vcf.Next.Record`.
+The `match` subject must be a variable of the enum type; `match (bed.next($r))`
+is rejected. The record variant is `bed.Next.Feature`, `gff.Next.Record`,
+`sam.Next.Alignment` or `vcf.Next.Record`; the record is in its `value` field.
 
 ## FASTQ
 
-`fastq.Read` is `{id, desc, seq, qual}`. The header is split at the first space:
-`@r1 length=150` gives `id` of `r1` and `desc` of `length=150`.
+`fastq.Read` holds `id`, `desc`, `seq` and `qual`. The header is split at the
+first space: `@r1 length=150` gives `id` `r1` and `desc` `length=150`.
 
 ```jennifer
 def rec as fastq.Read init fastq.parse("@r1 note", "ACGTN", "+", "IIII#");
@@ -68,100 +63,90 @@ def rec as fastq.Read init fastq.parse("@r1 note", "ACGTN", "+", "IIII#");
 fastq.length($rec);                       # 5
 fastq.gcPercent($rec);                    # 40.0
 fastq.ambiguousCount($rec);               # 1
-fastq.meanQuality($rec, fastq.PHRED33);   # arithmetic mean Phred
-fastq.minQuality($rec, fastq.PHRED33);
+fastq.meanQuality($rec, fastq.PHRED33);   # arithmetic mean Phred, as FastQC and fastp
+fastq.minQuality($rec, fastq.PHRED33);    # -1 for an empty read
 fastq.qualities($rec, fastq.PHRED33);     # list of int, one per base
 
-fastq.subseq($rec, 1, 4);                 # slices seq and qual together
+fastq.subseq($rec, 1, 4);                 # 0-based, half-open; slices seq and qual
 fastq.reverseComplement($rec);            # reverses qual to match
-fastq.format($rec);                       # back to four lines
+fastq.format($rec);                       # four lines, newline-terminated
 fastq.toFasta($rec);                      # two-line FASTA
 ```
 
-`qualities` and `meanQuality` decode the quality string, which costs one
-interpreter step per base. For whole-file statistics use [`qc`](qc.md), which
-counts in Go-speed batches instead.
+`fastq.PHRED33` (33) is the Sanger / Illumina 1.8+ offset; `fastq.PHRED64` (64)
+is legacy Illumina 1.3-1.7. `qualities`, `meanQuality` and `minQuality` decode
+one base per interpreter step; for whole-file statistics use [`qc`](qc.md).
 
-Parsing validates the shape: a header not starting with `@`, a separator not
-starting with `+`, or a sequence and quality of different lengths all raise
-`ngs.fastq`.
+`parse` and `next` raise `ngs.fastq` on a header not starting with `@`, a
+separator not starting with `+`, a sequence and quality of different lengths,
+or a truncated record. `format` always writes the separator as a bare `+`.
 
-### Converting as a stream
-
-FASTQ to FASTA, without either file in memory:
-
-```jennifer
-def r as fastq.Reader init fastq.open("in.fastq.gz");
-def k as source.Sink init source.create("out.fasta.gz");
-while (fastq.hasNext($r)) {
-    source.writeText($k, fastq.toFasta(fastq.next($r)));
-}
-fastq.closeStrict($r);
-source.closeSink($k);
-```
+[Recipes](recipes.md#convert-fastq-to-fasta) has a streaming FASTQ-to-FASTA
+conversion.
 
 ## BED
 
-BED maps directly onto `intervals.Interval` - both are 0-based and half-open -
-so a parsed feature drops straight into [the interval engine](intervals.md).
-The first six columns are read; anything further (thickStart, blocks) is ignored.
+BED records are `intervals.Interval` values, so they go straight into the
+[interval engine](intervals.md). The first six columns are read; thickStart,
+blocks and later columns are ignored. A missing name reads as `""` and a missing
+strand as `"."`; `bed.format` writes both back as `.`, and a whole-number score
+without a decimal part.
 
 ```jennifer
 def iv as intervals.Interval init bed.parse("chr1\t100\t200\tpeak1\t55\t-");
 bed.format($iv);                # chr1  100  200  peak1  55  -
 ```
 
-For feature sets that fit in memory - the usual case, since annotation is small
-next to sequencing data - skip the cursor entirely:
+Annotation is usually small next to sequencing data, so the whole-file calls
+are the common path:
 
 ```jennifer
 def peaks as list of intervals.Interval init bed.readAll("peaks.bed");
-bed.writeAll("out.bed.gz", $peaks);
+bed.writeAll("out.bed.gz", $peaks);    # gzipped because of the name
 ```
 
-`readAll` skips blank lines, `#` comments, and `track` / `browser` lines.
+Readers skip blank lines, `#` comments and `track` / `browser` lines. A record
+with fewer than three columns, or a non-numeric coordinate, raises `ngs.bed`.
+`bed.write` appends one interval to an open sink.
 
 ## GFF3 and GTF
 
-One module handles both. They share nine tab-delimited columns and differ only
-in the ninth: GFF3 writes `key=value;key=value` with percent-escaping, GTF writes
-`key "value"; key "value";`. `gff.parse` detects the style per record, so a mixed
-directory needs no flag.
+One module reads both. They share nine tab-delimited columns and differ in the
+ninth: GFF3 writes `key=value;key=value` with percent-escaping, GTF writes
+`key "value"; key "value";`. `gff.parse` detects the style per record from the
+first pair. A GTF value written unquoted, as GENCODE does for `level 2`, is
+still read as GTF.
 
 ```jennifer
 def f as gff.Feature init gff.parse($line);
 
-$f.seqid; $f.origin; $f.kind;      # 'source' and 'type' columns
+$f.seqid; $f.origin; $f.kind;      # the seqid, source and type columns
 $f.start; $f.end;                  # 1-based, inclusive, as written
 $f.strand; $f.phase;               # phase is -1 when absent
+$f.score;                          # 0.0 when absent
 
 gff.attribute($f, "gene_id", "");
 gff.identifier($f);                # ID, else transcript_id, else gene_id
 gff.name($f);                      # Name, else gene_name, else identifier
 ```
 
-GFF3 attribute values are percent-decoded on read and re-escaped on write, so
-a `Note` containing `;` or `=` survives a round trip.
-
-Reading a whole annotation, optionally filtered by feature type, and converting
-to intervals in one call:
+GFF3 values are percent-decoded on read. On write, only the characters GFF3
+reserves are escaped: tab, newline, carriage return and `%`, plus `;`, `=`, `&`
+and `,` in column 9. Spaces stay as they are. An empty attribute map, or a
+ninth column of `.`, is written as `.`. A score of `0.0` is written as `.`.
 
 ```jennifer
 def exons as list of intervals.Interval init gff.readIntervals("genes.gff3", "exon");
 def all as list of intervals.Interval init gff.readIntervals("genes.gff3", "");
 ```
 
-The cursor stops at a `##FASTA` section rather than trying to parse the sequence
-block that follows it.
+Readers stop at a `##FASTA` section. A record with fewer than nine columns
+raises `ngs.gff`. `gff.readAll` closes its reader with `close`, not
+`closeStrict`, so a truncated `.gz` annotation is not reported.
 
 ## SAM
 
-SAM only. BAM and CRAM are [out of scope](index.md#out-of-scope) - pipe
-`samtools view -h` in instead:
-
-```sh
-samtools view -h aln.bam | jennifer run myscript.j -
-```
+SAM only; read BAM or CRAM [through `samtools view -h`](recipes.md#read-bam-through-samtools).
 
 ```jennifer
 def rec as sam.Record init sam.parse($line);
@@ -173,66 +158,79 @@ sam.isSupplementary($rec);
 sam.isDuplicate($rec);
 sam.isPrimary($rec);          # mapped, not secondary, not supplementary
 sam.strandOf($rec);           # "+", "-", or "." when unmapped
-sam.hasFlag($rec, sam.FLAG_PROPER_PAIR);
+sam.hasFlag($rec, sam.FLAG_PROPER_PAIR);   # true when any bit of the mask is set
 
-sam.tagValue($rec, "NM", "");  # optional tag, TAG:TYPE: prefix stripped
+sam.tagValue($rec, "NM", "");  # value with its TAG:TYPE: prefix stripped
 ```
 
-CIGAR strings are parsed into `sam.CigarOp{length, op}`, with the two span
-functions that matter:
+The flag constants, `sam.FLAG_PAIRED` (`0x1`) to `sam.FLAG_SUPPLEMENTARY`
+(`0x800`), are the SAM specification's FLAG bits. A record needs at
+least eleven columns; columns after the eleventh are kept verbatim in `tags`.
+
+`sam.parseCigar` splits a CIGAR into `sam.CigarOp` values and raises `ngs.sam`
+on a malformed string. The two span functions:
 
 ```jennifer
 sam.referenceLength("10M5D10M");   # 25 - counts M D N = X
 sam.queryLength("10M2I5S");        # 17 - counts M I S = X
 ```
 
-`sam.toInterval` uses `referenceLength` to derive the end position, so a spliced
-or deleted alignment gets its true reference span rather than the read length.
+`sam.toInterval` derives the end from `referenceLength`, so a spliced or
+deleted alignment gets its reference span rather than its read length
+([details](coordinates.md#what-samtointerval-does-with-cigar)).
 
 ### The header
 
-`sam.open` captures the `@` header block on the `Reader`, and
-`sam.referenceSizes` turns the `@SQ` lines into the chromosome-size map that
-[`intervals.complement`](intervals.md#complement) wants:
+`sam.open` reads the `@` header block with a separate short pass over the
+front of the file and keeps it on `Reader.header`; the record stream then
+starts at byte zero and skips the `@` lines. `sam.referenceSizes` turns the
+`@SQ` lines into the chromosome-size map
+[`intervals.complement`](intervals.md#complement) takes:
 
 ```jennifer
 def r as sam.Reader init sam.open("aln.sam");
 def sizes as map of string to int init sam.referenceSizes($r);
 ```
 
-The header is read by a short separate pass over the front of the file, so the
-record stream still starts clean. On **stdin** `header` is empty - a stream
-cannot be re-read, and reading it eagerly would consume the first alignment with
-no way to put it back. `sam.headerOf(path)` reads a header on its own.
+On standard input `header` is empty: a stream cannot be re-read, and reading
+the header first would consume the first alignment. `sam.headerOf(path)` reads
+only the header of a file; it closes with `close`, since stopping early makes a
+gzip decompressor exit on `SIGPIPE`.
 
 ## VCF
 
 ```jennifer
 def v as vcf.Variant init vcf.parse($line);
 
-$v.chrom; $v.pos; $v.id; $v.ref; $v.alt;   # alt is a list
-$v.qual;                                    # -1.0 when the column is "."
-$v.filter;
+$v.chrom; $v.pos; $v.id; $v.ref;
+$v.alt;                        # list of string, empty when "."
+$v.qual;                       # -1.0 when the column is "."
+$v.filter;                     # verbatim
 
-vcf.passed($v);                # PASS or "." both count as passing
-vcf.isSnv($v);                 # ref and every alt a single base
-vcf.isIndel($v);               # a length difference, symbolic alleles excluded
+vcf.passed($v);                # FILTER is PASS, "." or empty
+vcf.isSnv($v);                 # REF and every ALT one of A C G T N (upper case)
+vcf.isIndel($v);               # an ALT of different length, symbolic and breakend ALTs excluded
 vcf.info($v, "DP", "0");
 vcf.hasInfo($v, "DB");         # a bare flag maps to ""
 ```
+
+`vcf.parseInfo` and `vcf.formatInfo` convert the INFO column to and from a
+map; a value runs from the first `=` to the end of the entry.
 
 Per-sample values are read by index into the reader's `samples` list:
 
 ```jennifer
 def r as vcf.Reader init vcf.open("calls.vcf.gz");
 for (def i in 0..len($r.samples)) {
-    io.printf("%s %s\n", $r.samples[$i], vcf.genotype($v, $i));
+    io.printf("%s %s\n", $r.samples[$i], vcf.genotype($v, $i));   # "./." when absent
 }
 vcf.sampleValue($v, 0, "DP", ".");
 ```
 
-`vcf.open` captures `meta` (the `##` lines) and `samples` (from `#CHROM`) the
-same way `sam.open` does, with the same stdin caveat.
+`vcf.open` captures `meta` (the `##` lines) and `samples` (from the `#CHROM`
+line) with a separate pass, as `sam.open` does; on standard input both are
+empty. A record with fewer than eight columns raises `ngs.vcf`.
 
-`vcf.format` round-trips a parsed record byte-for-byte for the common shapes,
-including minimal eight-column records with no genotypes.
+`vcf.format` reproduces a parsed record, minimal eight-column records included,
+with one exception: QUAL is re-rendered from a float, so an integer QUAL such
+as `60` is written as `60.0`.

@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
- * Shared primitives for the NGS deck: error construction, Go-speed counting
- * helpers, tab-delimited field handling and small string utilities.
+ * Shared primitives: error construction, Go-speed counting, tab-delimited
+ * field access and sequence helpers.
  *
- * Every other module in the deck imports this one; it imports nothing from the
- * deck itself, so it is the dependency root.
+ * Every other module imports this one; it imports nothing from the deck.
  *
  * @module core
  * @since 0.1.0
@@ -18,28 +17,28 @@ use os;
 use fs;
 use path;
 
-/** Deck-wide error kind prefix, so a caller can match on `$e.kind`. */
+/** Prefix of every error kind the deck raises: `ngs.<module>`. */
 export def const ERROR_KIND as string init "ngs";
 
-/** Tab, the field separator every text format in this deck uses. */
+/** Field separator of every text format in the deck. */
 export def const TAB as string init "\t";
 
 /**
  * Zero run used to left-pad sort keys.
  *
- * Slicing the tail of `ZEROS + digits` costs one allocation, where
+ * Slicing the tail of `PAD_ZEROS + digits` costs one allocation, where
  * `strings.repeat` costs a length computation and a build; over the hundreds of
- * thousands of keys a sort of a real annotation needs, the difference shows.
- * Long enough for any 64-bit coordinate.
+ * thousands of keys a sort of a real annotation needs, that is measurable.
+ * 19 digits covers any 64-bit coordinate.
  */
 def const PAD_ZEROS as string init "0000000000000000000";
 
 /**
- * Raise a deck error with a stable kind.
+ * Raise a deck error.
  *
- * @param what {string} short subsystem tag, e.g. "source" or "fastq"
+ * @param what {string} subsystem tag, e.g. "source" or "fastq"
  * @param message {string} human-readable detail
- * @throws {Error} always; kind is "ngs.<what>"
+ * @throws {Error} kind "ngs.<what>", always
  */
 export func fail(what as string, message as string) {
     throw Error{kind: ERROR_KIND + "." + $what, message: $message, file: "", line: 0, col: 0};
@@ -48,13 +47,13 @@ export func fail(what as string, message as string) {
 /**
  * Count non-overlapping occurrences of `needle` in `haystack`.
  *
- * Runs entirely inside Go (`strings.replace` plus two `len`s), so it costs one
- * native scan rather than a per-character Jennifer loop. This is the deck's
- * main tool for base composition and adapter counting over large batches.
+ * Runs inside Go (`strings.replace` plus two `len`s): one native scan instead
+ * of a per-character Jennifer loop. `qc` counts base composition and adapters
+ * with it.
  *
  * @param haystack {string} text to scan
- * @param needle {string} non-empty substring to count
- * @return {int} number of occurrences, 0 when needle is empty
+ * @param needle {string} substring to count
+ * @return {int} number of occurrences, 0 when `needle` is empty
  */
 export func countIn(haystack as string, needle as string) {
     if (len($needle) == 0) {
@@ -66,16 +65,15 @@ export func countIn(haystack as string, needle as string) {
 /**
  * Parse an integer field, reporting a malformed value as a deck error.
  *
- * `convert.toInt` raises a bare `runtime` error naming only the offending text,
- * which tells a caller nothing about which file, record or column produced it -
- * and does not carry the `ngs.*` kind the rest of the deck promises. Every
- * numeric column in every format goes through here instead.
+ * `convert.toInt` raises a bare `runtime` error naming only the text; this
+ * raises `ngs.<what>` naming the column. The record parsers convert columns
+ * inline and wrap the whole record with `reraise` instead.
  *
  * @param what {string} subsystem tag, e.g. "bed"
  * @param label {string} what the column is, e.g. "start"
  * @param raw {string} the text to parse
  * @return {int} the parsed value
- * @throws {Error} kind `ngs.<what>` when the text is not an integer
+ * @throws {Error} kind "ngs.<what>" when the text is not an integer
  */
 export func parseInt(what as string, label as string, raw as string) {
     try {
@@ -93,7 +91,7 @@ export func parseInt(what as string, label as string, raw as string) {
  * @param label {string} what the column is, e.g. "qual"
  * @param raw {string} the text to parse
  * @return {float} the parsed value
- * @throws {Error} kind `ngs.<what>` when the text is not a number
+ * @throws {Error} kind "ngs.<what>" when the text is not a number
  */
 export func parseFloat(what as string, label as string, raw as string) {
     try {
@@ -114,9 +112,10 @@ export func parseFloat(what as string, label as string, raw as string) {
  * that diagnosed it keeps the credit.
  *
  * @param what {string} subsystem tag, e.g. "bed"
- * @param line {string} the record being parsed, for context
- * @param e {Error} the error that interrupted the parse
- * @throws {Error} always; kind `ngs.<what>` unless `e` already had one
+ * @param line {string} record being parsed, quoted in the message
+ * @param e {Error} error that interrupted the parse
+ * @throws {Error} always: `e` itself when its kind starts with "ngs.", else kind
+ *   "ngs.<what>" with the record appended to the message
  */
 export func reraise(what as string, line as string, e as Error) {
     if (strings.startsWith($e.kind, ERROR_KIND + ".")) {
@@ -128,8 +127,8 @@ export func reraise(what as string, line as string, e as Error) {
 /**
  * Split a tab-delimited line into its fields.
  *
- * @param line {string} one record line, already newline-stripped
- * @return {list of string} fields, never empty for a non-empty line
+ * @param line {string} one record, newline already stripped
+ * @return {list of string} the fields; never empty
  */
 export func splitTab(line as string) {
     return strings.split($line, TAB);
@@ -138,13 +137,12 @@ export func splitTab(line as string) {
 /**
  * Field `i` of `fields`, or `fallback` when the column is absent.
  *
- * Optional trailing columns are normal in BED and SAM, so reads are guarded
- * rather than bounds-checked at every call site.
+ * Optional trailing columns are normal in BED and SAM.
  *
  * @param fields {list of string} split record
  * @param i {int} zero-based column index
- * @param fallback {string} value to use when the column is missing
- * @return {string}
+ * @param fallback {string} value for a missing column
+ * @return {string} the column, or `fallback`
  */
 export func field(fields as list of string, i as int, fallback as string) {
     if ($i < 0 or $i >= len($fields)) {
@@ -160,8 +158,8 @@ export func field(fields as list of string, i as int, fallback as string) {
  * @param fields {list of string} split record
  * @param i {int} zero-based column index
  * @param fallback {int} value for a missing or "." column
- * @return {int}
- * @throws {Error} kind `ngs.<what>` when the column is present but not a number
+ * @return {int} the parsed column, or `fallback`
+ * @throws {Error} kind "ngs.<what>" when the column is present but not an integer
  */
 export func intField(what as string, fields as list of string, i as int, fallback as int) {
     def raw as string init field($fields, $i, "");
@@ -178,8 +176,8 @@ export func intField(what as string, fields as list of string, i as int, fallbac
  * @param fields {list of string} split record
  * @param i {int} zero-based column index
  * @param fallback {float} value for a missing or "." column
- * @return {float}
- * @throws {Error} kind `ngs.<what>` when the column is present but not a number
+ * @return {float} the parsed column, or `fallback`
+ * @throws {Error} kind "ngs.<what>" when the column is present but not a number
  */
 export func floatField(what as string, fields as list of string, i as int, fallback as float) {
     def raw as string init field($fields, $i, "");
@@ -190,11 +188,11 @@ export func floatField(what as string, fields as list of string, i as int, fallb
 }
 
 /**
- * Whether a line should be skipped by a record reader: empty or a comment.
+ * Whether a record reader should skip a line.
  *
  * @param line {string} raw line
  * @param marker {string} comment prefix, e.g. "#" or "@"
- * @return {bool}
+ * @return {bool} true for a blank or whitespace-only line, or one starting with `marker`
  */
 export func isSkippable(line as string, marker as string) {
     if (len(strings.trim($line)) == 0) {
@@ -210,8 +208,8 @@ export func isSkippable(line as string, marker as string) {
  * so they sort before every padded value.
  *
  * @param n {int} value to pad
- * @param width {int} target width
- * @return {string}
+ * @param width {int} minimum number of digits
+ * @return {string} the digits, zero-padded on the left
  */
 export func padNum(n as int, width as int) {
     if ($n < 0) {
@@ -247,8 +245,8 @@ export func shellQuote(s as string) {
 /**
  * Reverse complement of a DNA sequence.
  *
- * Recognises upper- and lower-case A/C/G/T/U/N plus the IUPAC ambiguity codes;
- * any other character is passed through unchanged.
+ * Complements A, C, G, T, U (to A) and the IUPAC ambiguity codes in either
+ * case; any other character, N included, is kept as is.
  *
  * @param seq {string} nucleotide sequence
  * @return {string} reverse complement, case preserved
@@ -268,7 +266,7 @@ export func reverseComplement(seq as string) {
  * Complement of a single nucleotide character.
  *
  * @param b {string} one-character base
- * @return {string} complementary base, or `b` when not a nucleotide code
+ * @return {string} complementary base, or `b` when it has none
  */
 export func complementBase(b as string) {
     match ($b) {
@@ -305,7 +303,7 @@ export func complementBase(b as string) {
 }
 
 /**
- * G+C count of a sequence, counted at Go speed.
+ * G+C count of a sequence, at Go speed.
  *
  * @param seq {string} nucleotide sequence
  * @return {int} number of G, C, g and c characters
@@ -315,7 +313,7 @@ export func gcCount(seq as string) {
 }
 
 /**
- * Ambiguous-base (N) count of a sequence, counted at Go speed.
+ * N count of a sequence, at Go speed.
  *
  * @param seq {string} nucleotide sequence
  * @return {int} number of N and n characters
@@ -325,13 +323,14 @@ export func nCount(seq as string) {
 }
 
 /**
- * Whether an executable is on `PATH`.
+ * Whether a program is on `PATH`.
  *
  * Walks `PATH` with `fs` rather than shelling out, so it works without the
- * `exec` capability and cannot be confused by shell quoting.
+ * `exec` capability. Checks only that a regular file of that name exists, not
+ * that it is executable.
  *
  * @param name {string} program name, or a path containing a separator
- * @return {bool} true when the program exists and is a regular file
+ * @return {bool} true when a regular file of that name is found
  */
 export func hasTool(name as string) {
     if (strings.contains($name, os.DIRSEP)) {
@@ -351,9 +350,9 @@ export func hasTool(name as string) {
 /**
  * Whether two paths resolve to the same file.
  *
- * Resolves symlinks, so `./reads.fq`, `reads.fq` and a link to it all compare
- * equal. A path that does not exist can never be the same file as one that
- * does, so a not-yet-created output is safely `false`.
+ * Resolves symlinks, so `./reads.fq`, `reads.fq` and a link to it compare
+ * equal. A path that does not exist is never the same file as anything, itself
+ * included, so a not-yet-created output gives `false`.
  *
  * @param a {string} first path
  * @param b {string} second path

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-3.0-only
-# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <jennifer@mplx.dev>
+# SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
 # pragma-jennifer-version: >=0.25.0
 
 /**
@@ -273,4 +273,28 @@ func testCleanUpStillRemovesAWorkDir() {
     fs.writeString(path.join($dir, "scratch.txt"), "x");
     cleanUp($dir);
     testing.assertEqual(fs.exists($dir), false);
+}
+
+func result(code as int, tolerated as bool) {
+    return Result{
+        name: "step",
+        exitCode: $code,
+        stdout: "",
+        stderr: "boom",
+        skipped: false,
+        allowFailure: $tolerated
+    };
+}
+
+func testCheckAllPassesSuccessesAndToleratedFailures() {
+    checkAll([]);
+    checkAll([result(0, false), result(3, true), result(0, true)]);
+}
+
+func testCheckAllRaisesOnARealFailure() {
+    testing.assertThrows("checkAllWithFailure", "ngs.pipeline");
+}
+
+func checkAllWithFailure() {
+    return checkAll([result(0, false), result(3, true), result(2, false)]);
 }
