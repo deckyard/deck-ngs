@@ -1,7 +1,7 @@
-# Grimoire book configuration for the @jennifer/ngs deck documentation.
+# Grimoire book configuration for the @deckyard/ngs deck documentation.
 
 [book]
-title = "@jennifer/ngs"
+title = "@deckyard/ngs"
 description = "Streaming NGS file formats, read QC, interval arithmetic and pipeline orchestration for Jennifer."
 language = "en"
 src = "docs"
@@ -18,9 +18,10 @@ navPosition = "left"
 tocPosition = "right"
 tocDepth = 3
 sectionNumbers = true
-repoUrl = "https://github.com/jennifer-language/deck-ngs"
+repoUrl = "https://github.com/deckyard/deck-ngs"
 repoLabel = "Source"
-editUrl = "https://github.com/jennifer-language/deck-ngs/edit/main/docs/{path}"
+editUrl = "https://github.com/deckyard/deck-ngs/edit/main/docs/{path}"
+footer = 'Part of <a href="https://github.com/deckyard">Deckyard</a>, community decks for <a href="https://jennifer-lang.dev/">Jennifer</a>. Rendered with <a href="https://grimoire.jennifer-lang.dev/">Grimoire</a>.'
 
 [highlight]
 enabled = true

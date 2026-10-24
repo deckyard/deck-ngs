@@ -1,9 +1,9 @@
 package:
-  name: "@jennifer/ngs"
-  version: "0.1.0"
+  name: "@deckyard/ngs"
+  version: "0.2.0-dev"
   description: "Streaming NGS file formats, read QC, interval arithmetic and pipeline orchestration"
   license: "LGPL-3.0-only"
-  authors: ["mplx <jennifer@mplx.dev>"]
+  authors: ["mplx <mplx@jennifer-lang.dev>"]
   # What the code actually reaches for:
   #   exec - streaming gzip runs `gzip -dc` through a FIFO, and `pipeline` runs
   #          external tools. Both are checked at runtime with meta.hasCapability
@@ -12,9 +12,9 @@ package:
   capabilities: ["exec"]
   keywords: ["bioinformatics", "ngs", "sequencing", "fastq", "genomics"]
   urls:
-    deck: "https://raw.githubusercontent.com/jennifer-language/deck-ngs/main/deck.yaml"
-    homepage: "https://github.com/jennifer-language/deck-ngs"
-    manual: "https://jennifer-language.github.io/deck-ngs/"
+    deck: "https://raw.githubusercontent.com/deckyard/deck-ngs/main/deck.yaml"
+    homepage: "https://github.com/deckyard/deck-ngs"
+    manual: "https://deckyard.github.io/deck-ngs/"
 
 #  Only the default binary is listed - `jennifer-tiny` has neither
 # `exec` nor the capability probe this deck's gzip and pipeline layers need.

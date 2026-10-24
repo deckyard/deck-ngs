@@ -9,3 +9,7 @@ ngs-*.tar.gz.sha256
 # Fixtures built by tools/check-examples.sh; removed on exit, ignored if a
 # hard kill leaves them behind.
 .ci-fixtures/
+dist/
+vendor/
+.jennifer-src/
+.jfmt-*.tmp
