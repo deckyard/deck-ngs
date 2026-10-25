@@ -70,8 +70,8 @@ export def struct Reader {
 /**
  * The result of advancing a GFF cursor.
  *
- * @field Record {Feature} next feature, in `value`
- * @field Done {none} end of stream
+ *   `Record`  the next feature, a `Feature`, in `value`
+ *   `Done`    the end of the stream
  */
 export def enum Next {
     Record{value as Feature},

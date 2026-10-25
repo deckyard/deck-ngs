@@ -120,8 +120,8 @@ export def struct Reader {
 /**
  * The result of advancing a SAM cursor.
  *
- * @field Alignment {Record} next record, in `value`
- * @field Done {none} end of stream
+ *   `Alignment`  the next record, a `Record`, in `value`
+ *   `Done`       the end of the stream
  */
 export def enum Next {
     Alignment{value as Record},

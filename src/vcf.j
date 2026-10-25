@@ -71,8 +71,8 @@ export def struct Reader {
 /**
  * The result of advancing a VCF cursor.
  *
- * @field Record {Variant} next variant, in `value`
- * @field Done {none} end of stream
+ *   `Record`  the next variant, a `Variant`, in `value`
+ *   `Done`    the end of the stream
  */
 export def enum Next {
     Record{value as Variant},

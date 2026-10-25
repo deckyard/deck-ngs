@@ -49,8 +49,8 @@ export def struct Reader {
 /**
  * The result of advancing a BED cursor.
  *
- * @field Feature {Interval} next record, in `value`
- * @field Done {none} end of stream
+ *   `Feature`  the next record, a `Interval`, in `value`
+ *   `Done`     the end of the stream
  */
 export def enum Next {
     Feature{value as intervals.Interval},
