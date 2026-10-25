@@ -13,3 +13,4 @@ dist/
 vendor/
 .jennifer-src/
 .jfmt-*.tmp
+.docblocks-*/

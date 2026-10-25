@@ -17,7 +17,10 @@
 #   5  docblock @param / @field match the declaration they sit on
 #   6  relative links resolve and stay inside docs/, the book outline covers
 #      every page, and docs/internal/directories.md (if any) lists the tree
-#   7  only with a tools/doc-claims.j: every value a guide claims is what the
+#   7  Jennifer's own `docblock` module accepts every docblock in src/, on
+#      private functions too: every @param names a parameter and every
+#      parameter has one, and an enum describes its variants in prose
+#   8  only with a tools/doc-claims.j: every value a guide claims is what the
 #      code returns, every annotated number is one of those values, and every
 #      listing the docs print is byte-for-byte what the code emits
 #
@@ -159,7 +162,12 @@ def arity(args):
             count += 1
     return count
 
-docs = sorted(glob.glob('docs/**/*.md', recursive=True)) + ['README.md']
+docs = sorted(glob.glob('docs/**/*.md', recursive=True))
+if os.path.exists('README.md'):
+    docs.append('README.md')
+else:
+    # a checkout without one usually means it was never committed
+    note('README.md', "missing - every deck needs one (is it committed?)")
 ns_alt = '|'.join(sorted(map(re.escape, namespaces), key=len, reverse=True))
 
 # ---- 1 + 2: phantom references and arity ---------------------------------
@@ -383,8 +391,42 @@ if backlog:
     print(f"  except {len(backlog)} carried in {TODO} - shrink that file")
 PYSTATIC
 
-# --- 7: the values the guides claim ----------------------------------------
 [[ "$mode" == check ]] || exit 0
+
+# --- 7: what Jennifer's docblock parser says --------------------------------
+# The parser that reads docblocks for Jennifer's own tooling, so a docblock
+# it rejects is wrong whatever the checks above think. The driver is written
+# inside the checkout, not /tmp: in CI the interpreter runs in a container
+# that only has the workspace mounted. Gitignored as .docblocks-*.
+mapfile -t documented < <(find src -name '*.j' ! -name '*_test.j' | sort)
+if (( ${#documented[@]} )); then
+    work="$(mktemp -d "${PWD}/.docblocks-XXXXXX")"
+    trap 'rm -rf "$work"' EXIT
+    cat > "$work/check.j" <<'JDOCBLOCK'
+use io;
+use os;
+use fs;
+
+import "docblock.j" as docblock;
+
+def count as int init 0;
+for (def i in 1..len(os.ARGS)) {
+    def doc as docblock.FileDoc init docblock.parse(fs.readString(os.ARGS[$i]));
+    for (def d in $doc.diagnostics) {
+        io.printf("  %s line %d: %s\n", os.ARGS[$i], $d.line, $d.message);
+        $count = $count + 1;
+    }
+}
+if ($count > 0) {
+    io.printf("\n%d docblock(s) rejected by Jennifer's docblock module.\n", $count);
+    exit 1;
+}
+io.printf("Jennifer's docblock module accepts all %d source file(s)\n", len(os.ARGS) - 1);
+JDOCBLOCK
+    "$JENNIFER" run "$(basename "$work")/check.j" "${documented[@]}"
+fi
+
+# --- 8: the values the guides claim ----------------------------------------
 if [[ ! -f tools/doc-claims.j ]]; then
     echo "no tools/doc-claims.j in this deck - skipping the value claims"
     exit 0

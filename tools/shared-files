@@ -48,6 +48,7 @@ optional AGENTS.md
 # check-examples-shared.sh; an unmodified copy of it is replaced by the wrapper.
 seed     tools/check-examples.sh 081b549223c4b10b3b40d64514251b11d547fb3319a2158ca895e789e5afaca8
 seed     .editorconfig
+seed     .github/CODEOWNERS
 merge    .gitignore
 import   CLAUDE.md @AGENTS.md
 
