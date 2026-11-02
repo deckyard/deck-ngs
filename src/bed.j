@@ -30,6 +30,7 @@
  */
 use strings;
 use convert;
+use fs;
 import "./core.j" as core;
 import "./source.j" as source;
 import "./intervals.j" as intervals;
@@ -87,8 +88,10 @@ export func openStdin() {
  * @throws {Error} as `parse`
  */
 export func next(r as Reader) {
-    while (source.hasNext($r.src)) {
-        def line as string init source.nextLine($r.src);
+    # `fs` directly rather than `source.hasNext`/`nextLine`: in this loop a
+    # call into another module costs more than the read itself.
+    while (not fs.eof($r.src.file)) {
+        def line as string init fs.readLine($r.src.file);
         if (not isDecoration($line)) {
             return Next.Feature{value: parse($line)};
         }
@@ -222,8 +225,8 @@ export func readAll(path as string) {
     # each feature in a payload that is copied into the binder and copied again
     # out of it, which doubles the struct copies on the one path whose whole job
     # is to build a list of them.
-    while (source.hasNext($r.src)) {
-        def line as string init source.nextLine($r.src);
+    while (not fs.eof($r.src.file)) {
+        def line as string init fs.readLine($r.src.file);
         if (not isDecoration($line)) {
             $out[] = parse($line);
         }

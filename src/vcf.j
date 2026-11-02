@@ -16,6 +16,7 @@
  */
 use strings;
 use convert;
+use fs;
 use maps;
 use lists;
 import "./core.j" as core;
@@ -120,8 +121,10 @@ export func openStdin() {
  * @throws {Error} as `parse`
  */
 export func next(r as Reader) {
-    while (source.hasNext($r.src)) {
-        def line as string init source.nextLine($r.src);
+    # `fs` directly rather than `source.hasNext`/`nextLine`: in this loop a
+    # call into another module costs more than the read itself.
+    while (not fs.eof($r.src.file)) {
+        def line as string init fs.readLine($r.src.file);
         if (not core.isSkippable($line, "#")) {
             return Next.Record{value: parse($line)};
         }

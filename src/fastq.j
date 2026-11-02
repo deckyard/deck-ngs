@@ -26,6 +26,7 @@
  */
 use strings;
 use convert;
+use fs;
 import "./core.j" as core;
 import "./source.j" as source;
 
@@ -88,7 +89,7 @@ export func openStdin() {
  * @return {bool} false at end of stream
  */
 export func hasNext(r as Reader) {
-    return source.hasNext($r.src);
+    return not fs.eof($r.src.file);
 }
 
 /**
@@ -100,16 +101,18 @@ export func hasNext(r as Reader) {
  *   separator, or a sequence/quality length mismatch, naming the header
  */
 export func next(r as Reader) {
-    def header as string init source.nextLine($r.src);
+    # `fs` directly rather than `source.hasNext`/`nextLine`: in this loop a
+    # call into another module costs more than the read itself.
+    def header as string init fs.readLine($r.src.file);
     try {
         # Reading the three remaining lines under one exception frame replaces a
         # `hasNext` probe between each of them. A truncated record then surfaces
         # as the read error it is, re-raised with the record's header for
         # context - and the probes were a quarter of the cost of the hottest
         # loop in the deck.
-        def seq as string init source.nextLine($r.src);
-        def plus as string init source.nextLine($r.src);
-        def qual as string init source.nextLine($r.src);
+        def seq as string init fs.readLine($r.src.file);
+        def plus as string init fs.readLine($r.src.file);
+        def qual as string init fs.readLine($r.src.file);
         return parse($header, $seq, $plus, $qual);
     } catch (e) {
         return core.reraise("fastq", $header, $e);
