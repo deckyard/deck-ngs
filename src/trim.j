@@ -592,16 +592,23 @@ func countsOnly(seen as int, kept as int, basesIn as int, basesOut as int) {
  * @return {int} zero-based cut position, -1 when nothing matches
  */
 func partialAt(seq as string, probe as string, overlap as int) {
-    def longest as int init len($probe) - 1;
-    if ($longest > len($seq)) {
-        $longest = len($seq);
+    if ($overlap > len($probe) - 1 or $overlap > len($seq)) {
+        return -1;
     }
-    def k as int init $longest;
-    while ($k >= $overlap) {
-        if (strings.endsWith($seq, strings.substring($probe, 0, $k))) {
-            return len($seq) - $k;
+    # A match of length k starts at len(seq) - k with the probe's first
+    # `overlap` bases, so a native search for that seed visits only the
+    # candidates, longest first.
+    def seed as string init strings.substring($probe, 0, $overlap);
+    def from as int init len($seq) - len($probe) + 1;
+    if ($from < 0) {
+        $from = 0;
+    }
+    def at as int init strings.indexOf($seq, $seed, $from);
+    while ($at >= 0) {
+        if (strings.startsWith($probe, strings.substring($seq, $at, len($seq)))) {
+            return $at;
         }
-        $k = $k - 1;
+        $at = strings.indexOf($seq, $seed, $at + 1);
     }
     return -1;
 }
