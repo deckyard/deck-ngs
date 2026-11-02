@@ -11,7 +11,7 @@ I/O is cheap; loops that touch every base are what make Jennifer code slow.
 | --- | --- | --- |
 | read lines, convert quality to `bytes`, count | 0.28 s | ~54 MB/s |
 | naive per-base loop over the same bases | 14.1 s | ~0.5 M bases/s |
-| `qc.analyze`, default options | 3.1 s | ~16 100 reads/s |
+| `qc.analyze`, default options | 2.4 s | ~21 000 reads/s |
 | `qc.analyze` with `perBase: true` | 27.5 s | ~1 800 reads/s |
 
 `fs.readLine` and `convert.bytesFromString` run in Go. The 50x gap between the
@@ -50,8 +50,8 @@ million.
 
 ## Budgeting a run
 
-At ~16 100 reads/s, a full QC pass over a 30x human WGS run of about 150 M reads
-takes around three hours. Subsampling takes seconds and gives stable
+At ~21 000 reads/s, a full QC pass over a 30x human WGS run of about 150 M reads
+takes around two hours. Subsampling takes seconds and gives stable
 statistics:
 
 ```jennifer
@@ -113,6 +113,11 @@ throughput comes from, since the work runs in optimised native code.
 launch, so there are no shared accumulators. It suits per-sample work that
 returns a small summary; it does not make a per-base loop fast.
 
+Spawn from a small function that takes only what the task needs.
+`runParallel` used to spawn inside its loop, so every task copied the whole job
+list and the results so far: 1 000 jobs took 1.7 s. Spawning from a one-job
+helper takes 0.35 s.
+
 ## Profiler findings
 
 `jennifer profile` reports hits and wall-clock time per source position;
@@ -147,6 +152,14 @@ function with a `try` 3.5 µs, so a `try` per column costs about 2 µs. SAM has
 five numeric columns. Wrapping the whole record parse in one `try` and
 re-raising through `core.reraise` costs one frame, and the message names the
 record rather than the column.
+
+### Calls into another module
+
+A call into another module costs more than a local one, and in a line loop more
+than the read itself. The readers call `fs.readLine` and `fs.eof` on the open
+handle instead of `source.nextLine` and `source.hasNext`: reading 50 000 FASTQ
+records went from 1.6 s to 1.1 s, and skipping 200 000 comment lines in the BED
+reader from 2.3 s to 1.0 s.
 
 ### Helper calls in the innermost loop
 
