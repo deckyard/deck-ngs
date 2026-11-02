@@ -292,10 +292,7 @@ export func runParallel(jobs as list of Job, width as int) {
         }
         def wave as list of task of Result init [];
         for (def i in $at..$stop) {
-            def one as Job init $jobs[$i];
-            $wave[] = spawn {
-                return run($one);
-            };
+            $wave[] = launch($jobs[$i]);
         }
         for (def res in task.waitAll($wave)) {
             $out[] = $res;
@@ -303,6 +300,20 @@ export func runParallel(jobs as list of Job, width as int) {
         $at = $stop;
     }
     return $out;
+}
+
+/**
+ * Start one job in its own task. `spawn` copies the scope it is written in, so
+ * spawning here copies one job instead of `runParallel`'s whole job list and
+ * the results gathered so far.
+ *
+ * @param one {Job} the job to run
+ * @return {task of Result} the running job
+ */
+func launch(one as Job) {
+    return spawn {
+        return run($one);
+    };
 }
 
 /**
