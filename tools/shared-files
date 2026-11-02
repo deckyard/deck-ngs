@@ -50,6 +50,7 @@ seed     tools/check-examples.sh 081b549223c4b10b3b40d64514251b11d547fb3319a2158
 seed     .editorconfig
 seed     .github/CODEOWNERS
 merge    .gitignore
+merge    .gitattributes
 import   CLAUDE.md @AGENTS.md
 
 retired  tools/check-cheatsheet.sh
