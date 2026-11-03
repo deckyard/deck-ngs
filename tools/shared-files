@@ -50,7 +50,9 @@ seed     tools/check-examples.sh 081b549223c4b10b3b40d64514251b11d547fb3319a2158
 seed     .editorconfig
 seed     .github/CODEOWNERS
 merge    .gitignore
-merge    .gitattributes
+# .gitattributes was a merge entry, which only appends lines; an unmodified
+# copy of that older version is replaced, a deck's own lines are kept.
+seed     .gitattributes 6a1c162e3552586766ca0722cb703a76476c11ebaeb4f9cd7d11a9abf1a67bc2
 import   CLAUDE.md @AGENTS.md
 
 retired  tools/check-cheatsheet.sh

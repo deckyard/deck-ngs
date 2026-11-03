@@ -100,7 +100,7 @@ Three workflows, byte-identical across the deck repositories:
 | workflow | when | what |
 | --- | --- | --- |
 | [`test.yml`](https://github.com/deckyard/deck-ngs/blob/main/.github/workflows/test.yml) | push, PR | the gate above |
-| [`docs.yml`](https://github.com/deckyard/deck-ngs/blob/main/.github/workflows/docs.yml) | push, PR | builds the book; publishes to Pages from `main` |
+| [`docs.yml`](https://github.com/deckyard/deck-ngs/blob/main/.github/workflows/docs.yml) | release tag, push, PR | Grimoire's shared Pages workflow: publishes the book of the highest release tag (`main` before the first); a PR only builds |
 | [`release.yml`](https://github.com/deckyard/deck-ngs/blob/main/.github/workflows/release.yml) | version tag | re-runs the gate, then cuts the release |
 
 Tests and docs run in containers, so a runner needs nothing installed.
@@ -115,7 +115,8 @@ bypasses the floor check. `JENNIFER_IMAGE` overrides the choice. The book uses
 `pipeline` need `exec`.
 
 Publishing the book needs GitHub Pages set to Build and deployment > Source >
-GitHub Actions in the repository settings.
+GitHub Actions in the repository settings, and the `github-pages` environment
+allowed to deploy from tags (a deployment tag rule `[0-9]*.[0-9]*.[0-9]*`).
 
 ## Cutting a release
 

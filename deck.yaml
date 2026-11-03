@@ -1,6 +1,6 @@
 package:
   name: "@deckyard/ngs"
-  version: "0.2.0"
+  version: "0.3.0-dev"
   description: "Streaming NGS file formats, read QC, interval arithmetic and pipeline orchestration"
   license: "LGPL-3.0-only"
   authors: ["mplx <mplx@jennifer-lang.dev>"]
