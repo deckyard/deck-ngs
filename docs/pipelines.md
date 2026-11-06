@@ -146,8 +146,10 @@ def work as string init pipeline.workDir("myrun");
 defer pipeline.cleanUp($work);
 ```
 
-`cleanUp` raises `ngs.pipeline` rather than recursively delete a filesystem
-root, the working directory, `.` or `..`.
+`cleanUp` raises `ngs.pipeline` rather than recursively delete `.`, `..`, the
+filesystem root, the working directory or any directory containing it. The
+target is compared by real path (symlinks and `..` resolved), so
+`../<cwd name>` or a symlink to the working directory is refused too.
 
 `examples/pipeline.j` is a runnable version: it QCs and trims each sample
 in-process, fans an external step out across cores, and shows a second pass

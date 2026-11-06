@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Interval arithmetic over genomic features, bedtools-lite.
@@ -14,12 +14,17 @@
  *
  * The set operations (`intersect`, `subtract`, `coverage`, `countOverlaps`)
  * sort their inputs and sweep, so after the sort they are linear in the input
- * plus the number of reported overlaps.
+ * plus the number of reported overlaps. `intersect` and `countOverlaps` keep
+ * the targets that span the current query start in an active list, so one long
+ * target does not make every later query rescan the targets after it.
+ * `complement` is one sweep over the merged input and the sorted chromosome
+ * names.
  *
  * @module intervals
  * @since 0.1.0
  */
 use lists;
+use maps;
 import "./core.j" as core;
 
 /** Digits each coordinate is zero-padded to in a sort key. */
@@ -85,7 +90,8 @@ export func make(chrom as string, start as int, end as int) {
  * @param strand {string} "+", "-" or "."
  * @return {Interval} the interval
  * @throws {Error} kind "ngs.intervals" when a coordinate is negative, `end` is
- *   below `start`, or `end` reaches `MAX_COORDINATE`
+ *   below `start`, `end` reaches `MAX_COORDINATE`, or `strand` is not "+", "-"
+ *   or "."
  */
 export func named(
     chrom as string,
@@ -108,6 +114,12 @@ export func named(
             "intervals",
             "coordinate too large to sort correctly (limit " +
                 core.padNum(MAX_COORDINATE, 1) + "): " + $chrom + ":" + core.padNum($end, 1));
+    }
+    if ($strand != "." and $strand != "+" and $strand != "-") {
+        core.fail(
+            "intervals",
+            "strand must be \"+\", \"-\" or \".\", got \"" + $strand + "\" in " + $chrom + ":" +
+                core.padNum($start, 1) + "-" + core.padNum($end, 1));
     }
     return Interval{
         chrom: $chrom,
@@ -323,23 +335,19 @@ export func totalLength(ivs as list of Interval) {
 export func intersect(a as list of Interval, b as list of Interval) {
     def qs as list of Interval init sort($a);
     def ts as list of Interval init sort($b);
+    def hits as Pairs init overlapPairs($qs, $ts);
     def out as list of Interval init [];
-    def cursor as int init 0;
-    for (def q in $qs) {
-        $cursor = advanceTo($ts, $cursor, $q);
-        def k as int init $cursor;
-        while ($k < len($ts) and $ts[$k].chrom == $q.chrom and $ts[$k].start < $q.end) {
-            if ($q.start < $ts[$k].end) {
-                $out[] = named(
-                    $q.chrom,
-                    upperOf($q.start, $ts[$k].start),
-                    lowerOf($q.end, $ts[$k].end),
-                    $q.name,
-                    $q.score,
-                    $q.strand);
-            }
-            $k = $k + 1;
-        }
+    for (def j in 0..len($hits.query)) {
+        def q as int init $hits.query[$j];
+        def t as int init $hits.target[$j];
+        $out[] = Interval{
+            chrom: $qs[$q].chrom,
+            start: upperOf($qs[$q].start, $ts[$t].start),
+            end: lowerOf($qs[$q].end, $ts[$t].end),
+            name: $qs[$q].name,
+            score: $qs[$q].score,
+            strand: $qs[$q].strand
+        };
     }
     return $out;
 }
@@ -355,21 +363,85 @@ export func intersect(a as list of Interval, b as list of Interval) {
 export func countOverlaps(a as list of Interval, b as list of Interval) {
     def qs as list of Interval init sort($a);
     def ts as list of Interval init sort($b);
+    def hits as Pairs init overlapPairs($qs, $ts);
     def out as list of int init [];
-    def cursor as int init 0;
-    for (def q in $qs) {
-        $cursor = advanceTo($ts, $cursor, $q);
-        def k as int init $cursor;
-        def hits as int init 0;
-        while ($k < len($ts) and $ts[$k].chrom == $q.chrom and $ts[$k].start < $q.end) {
-            if ($q.start < $ts[$k].end) {
-                $hits = $hits + 1;
-            }
-            $k = $k + 1;
-        }
-        $out[] = $hits;
+    for (def i in 0..len($qs)) {
+        $out[] = 0;
+    }
+    for (def j in 0..len($hits.query)) {
+        $out[$hits.query[$j]] = $out[$hits.query[$j]] + 1;
     }
     return $out;
+}
+
+/**
+ * Overlapping (query, target) index pairs of two sorted lists, as parallel
+ * lists.
+ *
+ * @field query {list of int} index into the queries
+ * @field target {list of int} index into the targets
+ */
+def struct Pairs {
+    query as list of int,
+    target as list of int
+};
+
+/**
+ * Every overlapping pair of two sorted interval lists, in query order, then
+ * target order.
+ *
+ * Queries arrive in start order, so a target that ends at or before one
+ * query's start cannot overlap any later query on that chromosome. Targets that
+ * start at or before the query start enter an active list and leave it once
+ * they end; every active target still in the list overlaps the query unless the
+ * query is zero-length. Targets that start inside the query follow the active
+ * list in the sorted order, and each one overlaps. The cost is linear in both
+ * inputs plus the pairs reported, whatever the target lengths.
+ *
+ * @param qs {list of Interval} sorted queries
+ * @param ts {list of Interval} sorted targets
+ * @return {Pairs} the overlapping pairs
+ */
+func overlapPairs(qs as list of Interval, ts as list of Interval) {
+    def pq as list of int init [];
+    def pt as list of int init [];
+    def active as list of int init [];
+    def next as int init 0;
+    def chrom as string init "";
+    for (def i in 0..len($qs)) {
+        if ($i == 0 or $qs[$i].chrom != $chrom) {
+            $chrom = $qs[$i].chrom;
+            $active = [];
+            while ($next < len($ts) and $ts[$next].chrom < $chrom) {
+                $next = $next + 1;
+            }
+        }
+        def from as int init $qs[$i].start;
+        def upto as int init $qs[$i].end;
+        while ($next < len($ts) and $ts[$next].chrom == $chrom and $ts[$next].start <= $from) {
+            $active[] = $next;
+            $next = $next + 1;
+        }
+        def kept as list of int init [];
+        for (def t in $active) {
+            if ($ts[$t].end <= $from) {
+                continue;
+            }
+            $kept[] = $t;
+            if ($ts[$t].start < $upto) {
+                $pq[] = $i;
+                $pt[] = $t;
+            }
+        }
+        $active = $kept;
+        def k as int init $next;
+        while ($k < len($ts) and $ts[$k].chrom == $chrom and $ts[$k].start < $upto) {
+            $pq[] = $i;
+            $pt[] = $k;
+            $k = $k + 1;
+        }
+    }
+    return Pairs{query: $pq, target: $pt};
 }
 
 /**
@@ -462,7 +534,9 @@ func clipPieces(q as Interval, ts as list of Interval, from as int) {
 /**
  * The uncovered stretches of every chromosome in `sizes`. As
  * `bedtools complement -g`. Intervals on chromosomes missing from `sizes` are
- * ignored; a chromosome with no intervals is returned whole.
+ * ignored; a chromosome with no intervals is returned whole. Intervals reaching
+ * past a chromosome's size are clipped to it. One sweep over the merged input
+ * and the sorted chromosome names.
  *
  * @param ivs {list of Interval} covered intervals
  * @param sizes {map of string to int} chromosome name to length
@@ -470,40 +544,29 @@ func clipPieces(q as Interval, ts as list of Interval, from as int) {
  */
 export func complement(ivs as list of Interval, sizes as map of string to int) {
     def merged as list of Interval init merge($ivs, 0);
+    def names as list of string init lists.sort(maps.keys($sizes));
     def out as list of Interval init [];
-    for (def chrom in $sizes) {
-        def gaps as list of Interval init gapsIn($merged, $chrom, $sizes[$chrom]);
-        for (def gap in $gaps) {
-            $out[] = $gap;
+    def p as int init 0;
+    for (def c in 0..len($names)) {
+        def chrom as string init $names[$c];
+        def limit as int init $sizes[$chrom];
+        while ($p < len($merged) and $merged[$p].chrom < $chrom) {
+            $p = $p + 1;
         }
-    }
-    return sort($out);
-}
-
-/**
- * Uncovered stretches of one chromosome, given merged covered intervals.
- *
- * @param merged {list of Interval} sorted, disjoint covered intervals
- * @param chrom {string} chromosome to walk
- * @param limit {int} chromosome length
- * @return {list of Interval} the gaps, in order
- */
-func gapsIn(merged as list of Interval, chrom as string, limit as int) {
-    def out as list of Interval init [];
-    def at as int init 0;
-    for (def i in 0..len($merged)) {
-        if ($merged[$i].chrom != $chrom) {
-            continue;
+        def at as int init 0;
+        while ($p < len($merged) and $merged[$p].chrom == $chrom) {
+            def edge as int init lowerOf($merged[$p].start, $limit);
+            if ($edge > $at) {
+                $out[] = make($chrom, $at, $edge);
+            }
+            if ($merged[$p].end > $at) {
+                $at = $merged[$p].end;
+            }
+            $p = $p + 1;
         }
-        if ($merged[$i].start > $at) {
-            $out[] = make($chrom, $at, lowerOf($merged[$i].start, $limit));
+        if ($at < $limit) {
+            $out[] = make($chrom, $at, $limit);
         }
-        if ($merged[$i].end > $at) {
-            $at = $merged[$i].end;
-        }
-    }
-    if ($at < $limit) {
-        $out[] = make($chrom, $at, $limit);
     }
     return $out;
 }

@@ -41,7 +41,7 @@ Phred+33. `qc.options()` returns the same settings explicitly.
 | `offset` | `fastq.PHRED33` | quality encoding; `0` means Phred+33 |
 | `batchSize` | `2000` (`qc.DEFAULT_BATCH`) | records buffered per counting batch |
 | `maxBatchBases` | `4000000` (`qc.DEFAULT_BATCH_BASES`) | bases buffered per batch; whichever limit is reached first counts the batch |
-| `adapters` | empty | sequences to count; empty means `qc.defaultAdapters()` |
+| `adapters` | empty | sequences to count; empty means `qc.defaultAdapters()`; an empty string raises `ngs.qc`, a duplicate is counted once |
 
 ```jennifer
 def opts as qc.Options init qc.options();
@@ -89,7 +89,7 @@ spans two records; a test covers this.
 ## How it counts
 
 `qc.analyze` buffers a batch of records and counts characters with
-`core.countIn`, a `strings.replace` inside Go: one native scan per character
+`core.countIn`, which is `strings.count`: one native scan per character
 class per batch rather than one interpreter step per base. The quality
 histogram takes one scan per Phred score and stops once every character in the
 batch is accounted for, about forty scans for typical Illumina data. Results are

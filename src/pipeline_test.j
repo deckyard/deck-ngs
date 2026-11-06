@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * White-box tests for the pipeline orchestration module.
@@ -297,4 +297,38 @@ func testCheckAllRaisesOnARealFailure() {
 
 func checkAllWithFailure() {
     return checkAll([result(0, false), result(3, true), result(2, false)]);
+}
+
+func testCleanUpRefusesTheWorkingDirectoryByAnotherName() {
+    # "../<cwd name>" cleans to itself, not ".", so only a real-path comparison
+    # sees that it is the working directory.
+    def here as string init os.cwd();
+    testing.assertThrows("cleanCwdViaParent", "ngs.pipeline");
+    testing.assertThrows("cleanParentOfCwd", "ngs.pipeline");
+    testing.assertThrows("cleanCwdViaSymlink", "ngs.pipeline");
+    testing.assertEqual(fs.isDir($here), true);
+}
+
+func cleanCwdViaParent() {
+    return cleanUp(path.join("..", path.base(os.cwd())));
+}
+
+func cleanParentOfCwd() {
+    return cleanUp(path.dir(os.cwd()));
+}
+
+func cleanCwdViaSymlink() {
+    def dir as string init workDir("ngslink");
+    defer fs.removeAll($dir);
+    def link as string init path.join($dir, "here");
+    fs.symlink(os.cwd(), $link);
+    return cleanUp($link);
+}
+
+func testSummaryRendersOneLinePerResult() {
+    def skipped as Result init result(0, false);
+    $skipped.skipped = true;
+    def got as string init summary([result(0, false), result(3, true), result(2, false), $skipped]);
+    # Status padded to four characters, a space, the job name.
+    testing.assertEqual($got, "ok   step\nwarn step\nfail step\nskip step\n");
 }

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Running external tools, Snakemake-lite. Describe each step as a `Job` with
@@ -405,25 +405,36 @@ export func workDir(tag as string) {
 /**
  * Remove a directory and everything under it.
  *
- * Pair with `workDir` under a `defer`. Refuses "", `.`, `..`, the filesystem
- * root and the working directory, so a mistyped variable cannot become a
- * recursive delete of something that matters. Anything else is removed
- * without further checks; a path that is not a directory is left alone.
+ * Pair with `workDir` under a `defer`. Refuses "", `.`, `..` and the
+ * filesystem root by name, then compares real paths (symlinks and `..`
+ * resolved) and refuses the root, the working directory and every ancestor of
+ * it, so a mistyped variable cannot become a recursive delete of something
+ * that matters. Anything else is removed without further checks; a path that
+ * is not a directory is left alone.
  *
  * @param dir {string} directory to remove
  * @throws {Error} kind "ngs.pipeline" for a refused target
  */
 export func cleanUp(dir as string) {
     def target as string init path.clean($dir);
-    if (len($target) == 0 or $target == "." or $target == ".." or $target == os.DIRSEP) {
-        core.fail("pipeline", "refusing to recursively remove " + $target);
+    if (len($dir) == 0 or $target == "." or $target == ".." or $target == os.DIRSEP) {
+        core.fail("pipeline", "refusing to recursively remove \"" + $dir + "\"");
     }
-    if ($target == path.clean(os.cwd())) {
-        core.fail("pipeline", "refusing to recursively remove the working directory");
+    if (not fs.isDir($target)) {
+        return;
     }
-    if (fs.isDir($target)) {
-        fs.removeAll($target);
+    def real as string init fs.realpath($target);
+    def here as string init fs.realpath(os.cwd());
+    if ($real == os.DIRSEP) {
+        core.fail("pipeline", "refusing to recursively remove the filesystem root (" + $dir + ")");
     }
+    if ($real == $here or strings.startsWith($here, $real + os.DIRSEP)) {
+        core.fail(
+            "pipeline",
+            "refusing to recursively remove " + $dir +
+                ": it is the working directory or contains it");
+    }
+    fs.removeAll($target);
 }
 
 /**
@@ -435,11 +446,11 @@ export func cleanUp(dir as string) {
  * @return {string} the lines, each newline-terminated
  */
 export func summary(results as list of Result) {
-    def out as string init "";
-    for (def res in $results) {
-        $out = $out + io.sprintf("%s %s\n", statusOf($res), $res.name);
+    def lines as list of string init [];
+    for (def i in 0..len($results)) {
+        $lines[] = io.sprintf("%s %s\n", statusOf($results[$i]), $results[$i].name);
     }
-    return $out;
+    return strings.join($lines, "");
 }
 
 /**

@@ -19,14 +19,13 @@ first two rows is the cost of the interpreter loop.
 
 ## Count in Go
 
-`core.countIn(haystack, needle)` is:
-
-```jennifer
-(len($haystack) - len(strings.replace($haystack, $needle, ""))) // len($needle)
-```
-
-`strings.replace` runs in Go, so this is one native scan. [`qc`](qc.md) buffers
-a batch of records and then counts:
+`core.countIn(haystack, needle)` is `strings.count($haystack, $needle)`, with
+0 for an empty needle (`strings.count` raises on one). It is one native scan
+that allocates nothing. In 0.2.0 it was
+`(len($haystack) - len(strings.replace($haystack, $needle, ""))) // len($needle)`,
+which builds a copy of the haystack per call: 500 counts over a 360 KB string
+took 594 ms that way and 4 ms with `strings.count`. [`qc`](qc.md) buffers a
+batch of records and then counts:
 
 - GC and N content - `core.gcCount` and `core.nCount`, four and two scans per
   batch
@@ -79,9 +78,15 @@ read lengths span three orders of magnitude.
 
 ## Struct copies in hot loops
 
-Assignment and argument passing copy. In a module, a parameter the body never
-writes is borrowed, not copied, so passing a large interval list to
-`intervals.intersect` is free; a struct built up per record is not.
+Assignment and argument passing copy. A parameter the body never writes is
+borrowed where the copy cannot be observed, but not every read-only parameter
+qualifies. `jennifer profile --allocs` on one `intervals.intersect` call over
+2 000 queries and 2 000 targets reports three whole copies of each list: the
+parameter binding, the argument to `intervals.sort`, and the sorted local, about
+22 MB by the profiler's estimate, plus one copy of the small active-target list
+per query. `countOverlaps` copies the same. The copies are linear in the
+input, not free. A struct built up per record costs more, because it is copied
+per record.
 
 An early `qc.analyze` accumulated into the `Report` struct, deep-copying a
 94-element histogram and two maps per record. Moving the hot counters into

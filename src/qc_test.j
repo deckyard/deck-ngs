@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * White-box tests for the QC module.
@@ -235,4 +235,25 @@ func testFailedAnalyzeLeavesNoTemporaries() {
     fs.remove($gz);
     testing.assertEqual($threw, true);
     testing.assertEqual($after, $before);
+}
+
+func testDuplicateAdapterIsCountedOnce() {
+    # One read holding the TruSeq prefix once.
+    def seq as string init "ACGTACGT" + ADAPTER_TRUSEQ + "TTTT";
+    def p as string init writeTemp(fq("a", $seq, strings.repeat("I", len($seq))), ".fastq");
+    def opts as Options init options();
+    $opts.adapters = [ADAPTER_TRUSEQ, ADAPTER_TRUSEQ];
+    def rep as Report init analyze($p, $opts);
+    fs.remove($p);
+    testing.assertEqual($rep.adapterHits[ADAPTER_TRUSEQ], 1);
+}
+
+func testEmptyAdapterIsRejected() {
+    testing.assertThrows("analyzeWithEmptyAdapter", "ngs.qc");
+}
+
+func analyzeWithEmptyAdapter() {
+    def opts as Options init options();
+    $opts.adapters = [ADAPTER_TRUSEQ, ""];
+    return analyze("/dev/null", $opts);
 }

@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * White-box tests for the interval engine.
  * Run with: jennifer test intervals_test.j
  */
 use testing;
+use math;
+use time;
+use convert;
 
 func iv(c as string, s as int, e as int) {
     return make($c, $s, $e);
@@ -216,4 +219,137 @@ func testSortKeyPadsCoordinatesToKeyWidth() {
 
 func testToBed3() {
     testing.assertEqual(toBed3(named("chrX", 0, 155270560, "x", 1.0, "-")), "chrX\t0\t155270560");
+}
+
+func nowMillis() {
+    return time.unixMillis(time.now());
+}
+
+# Random sets on two chromosomes with long, short and zero-length intervals;
+# the expected pairs come from comparing every query with every target.
+func randomSet(n as int) {
+    def out as list of Interval init [];
+    for (def i in 0..$n) {
+        def chrom as string init "chr1";
+        if (math.randInt(0, 2) == 0) {
+            $chrom = "chr2";
+        }
+        def start as int init math.randInt(0, 1000);
+        def width as int init math.randInt(0, 30);
+        if (math.randInt(0, 9) == 0) {
+            $width = math.randInt(200, 900);
+        }
+        $out[] = named($chrom, $start, $start + $width, "q" + convert.toString($i), 0.0, "+");
+    }
+    return $out;
+}
+
+# Every target `q` overlaps, as its intersection with `q`, by direct comparison.
+func bruteOverlaps(q as Interval, ts as list of Interval) {
+    def out as list of Interval init [];
+    for (def j in 0..len($ts)) {
+        if (overlaps($q, $ts[$j])) {
+            $out[] = intersection($q, $ts[$j]);
+        }
+    }
+    return $out;
+}
+
+func testIntersectAndCountOverlapsMatchBruteForce() {
+    math.randSeed(7);
+    for (def round in 0..5) {
+        def qs as list of Interval init sort(randomSet(120));
+        def ts as list of Interval init sort(randomSet(150));
+        def want as list of Interval init [];
+        def counts as list of int init [];
+        for (def i in 0..len($qs)) {
+            def hits as list of Interval init bruteOverlaps($qs[$i], $ts);
+            $counts[] = len($hits);
+            for (def h in $hits) {
+                $want[] = $h;
+            }
+        }
+        testing.assertEqual(intersect($qs, $ts), $want);
+        testing.assertEqual(countOverlaps($qs, $ts), $counts);
+    }
+}
+
+func testOneLongTargetDoesNotMakeIntersectQuadratic() {
+    # Each query [10i+5, 10i+6) misses the point target [10i, 10i+1) and lies
+    # inside the long one, so every count is 1. Before the active-list sweep the
+    # long target pinned the cursor and n = 3000 took about 7 s.
+    def n as int init 3000;
+    def ts as list of Interval init [iv("chr1", 0, 900000000)];
+    def qs as list of Interval init [];
+    for (def i in 0..$n) {
+        $ts[] = iv("chr1", $i * 10, $i * 10 + 1);
+        $qs[] = iv("chr1", $i * 10 + 5, $i * 10 + 6);
+    }
+    def t0 as int init nowMillis();
+    def counts as list of int init countOverlaps($qs, $ts);
+    def shared as list of Interval init intersect($qs, $ts);
+    def took as int init nowMillis() - $t0;
+    testing.assertEqual(len($shared), $n);
+    testing.assertEqual($counts[0], 1);
+    testing.assertEqual($counts[$n - 1], 1);
+    testing.assertEqual($shared[$n - 1].start, ($n - 1) * 10 + 5);
+    testing.assertEqual($took < 2000, true);
+}
+
+func testComplementClipsIntervalsPastTheChromosomeEnd() {
+    def sizes as map of string to int init {"chr1": 100};
+    # Both intervals start past the end: the whole chromosome is uncovered.
+    def beyond as list of Interval init complement(
+        [iv("chr1", 150, 160), iv("chr1", 170, 180)],
+        $sizes);
+    testing.assertEqual(len($beyond), 1);
+    testing.assertEqual($beyond[0].start, 0);
+    testing.assertEqual($beyond[0].end, 100);
+    # One interval straddles the end: only [0, 50) is left.
+    def straddle as list of Interval init complement([iv("chr1", 50, 160)], $sizes);
+    testing.assertEqual(len($straddle), 1);
+    testing.assertEqual($straddle[0].end, 50);
+}
+
+func testComplementReturnsBareChromosomesInSortOrder() {
+    def sizes as map of string to int init {"chr2": 50, "chr1": 30, "chr10": 20};
+    def got as list of Interval init complement([iv("chr1", 10, 20), iv("chrUn", 0, 5)], $sizes);
+    # chr1 has two gaps; chr10 and chr2 have no intervals and come back whole,
+    # in sort order (chr10 before chr2). chrUn is not in `sizes`.
+    testing.assertEqual(
+        $got,
+        [iv("chr1", 0, 10), iv("chr1", 20, 30), iv("chr10", 0, 20), iv("chr2", 0, 50)]);
+}
+
+func testComplementIsLinearInContigs() {
+    # 3000 contigs of 1000 bases, each covered at [10, 20): two gaps per contig.
+    # Walking every interval once per contig took about 6 s at this size.
+    def sizes as map of string to int init {};
+    def ivs as list of Interval init [];
+    for (def i in 0..3000) {
+        def name as string init "ctg" + convert.toString($i);
+        $sizes[$name] = 1000;
+        $ivs[] = iv($name, 10, 20);
+    }
+    def t0 as int init nowMillis();
+    def got as list of Interval init complement($ivs, $sizes);
+    def took as int init nowMillis() - $t0;
+    testing.assertEqual(len($got), 6000);
+    testing.assertEqual($took < 2000, true);
+}
+
+func testNamedAcceptsOnlyKnownStrands() {
+    testing.assertEqual(named("chr1", 0, 1, "", 0.0, "+").strand, "+");
+    testing.assertEqual(named("chr1", 0, 1, "", 0.0, "-").strand, "-");
+    testing.assertEqual(named("chr1", 0, 1, "", 0.0, ".").strand, ".");
+    testing.assertThrows("buildBadStrand", "ngs.intervals");
+    testing.assertThrows("buildEmptyStrand", "ngs.intervals");
+}
+
+func buildBadStrand() {
+    return named("chr1", 0, 1, "", 0.0, "x");
+}
+
+func buildEmptyStrand() {
+    return named("chr1", 0, 1, "", 0.0, "");
 }

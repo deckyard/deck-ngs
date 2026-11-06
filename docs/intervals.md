@@ -30,8 +30,9 @@ intervals.toBed3($a);            # "chr1\t100\t200"
 ```
 
 `make` builds an unnamed interval with strand `"."`. `make` and `named` raise
-`ngs.intervals` on a negative coordinate, an inverted interval (`end < start`)
-or an end of `intervals.MAX_COORDINATE` (10^12) or more.
+`ngs.intervals` on a negative coordinate, an inverted interval (`end < start`),
+an end of `intervals.MAX_COORDINATE` (10^12) or more, or a strand other than
+`"+"`, `"-"` or `"."`.
 `intervals.intersection` raises `ngs.intervals` when the two do not overlap.
 
 ## Set operations
@@ -64,10 +65,14 @@ reported.
 drops a fully covered query. Surviving pieces keep the query's name, score and
 strand.
 
-All four sort both sets, then sweep a cursor forward through the targets as the
+All four sort both sets, then sweep forward through the targets as the
 queries advance; a target ending before the current query starts cannot overlap
-a later query. Cost is linear in the input plus the number of reported
-overlaps, after the sort, which runs in Go through `lists.sortBy`.
+a later query. `coverage` and `subtract` sweep merged, disjoint targets with a
+cursor. `intersect` and `countOverlaps` keep the targets that span the current
+query start in an active list and drop each one once a query starts at or past
+its end, so a long target does not make later queries rescan the targets after
+it. Cost is linear in the input plus the number of reported overlaps, after the
+sort, which runs in Go through `lists.sortBy`.
 `intervals.sort` returns input that is already in
 order without sorting it.
 
@@ -92,7 +97,11 @@ def sizes as map of string to int init sam.referenceSizes($reader);
 def gaps as list of intervals.Interval init intervals.complement($covered, $sizes);
 ```
 
-Only chromosomes named in `sizes` appear in the result, which is sorted.
+Only chromosomes named in `sizes` appear in the result, which is sorted; a
+chromosome with no intervals comes back whole. Intervals reaching past a
+chromosome's size are clipped to it. It is one sweep over the merged intervals
+and the sorted chromosome names, so thousands of contigs cost no more than one
+pass over each.
 
 ## Growing and grouping
 

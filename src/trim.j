@@ -1,14 +1,17 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Read trimming, filtering and subsampling over FASTQ, fastp-lite.
  *
  * `run`, `subsampleEvery` and `subsampleFraction` stream one record at a time,
  * so memory does not grow with the input. Output is gzipped when the target
- * name ends in `.gz`. All three refuse an output that is the same file as the
- * input.
+ * name ends in `.gz`. All three refuse an output path that resolves to the
+ * input, and write to a temporary file in the output's directory that is
+ * renamed over the output only on success; on failure it is removed and an
+ * existing output is left as it was. An output hard-linked to the input
+ * therefore gets a new inode, and the input is never truncated.
  *
  * The trimming steps run in fastp's order, each also exported on its own:
  *
@@ -26,6 +29,10 @@
 use strings;
 use convert;
 use math;
+use fs;
+use path;
+use maps;
+use regex;
 import "./core.j" as core;
 import "./source.j" as source;
 import "./fastq.j" as fastq;
@@ -37,6 +44,9 @@ export def const DEFAULT_WINDOW as int init 4;
 /** Shortest partial adapter match accepted at a read's 3' end. */
 export def const DEFAULT_OVERLAP as int init 6;
 
+/** Regex class matching any character that is not Phred+33 quality, `!`..`~`. */
+def const PHRED33_INVALID as string init "[^!-~]";
+
 /**
  * How to trim and filter.
  *
@@ -47,7 +57,8 @@ export def const DEFAULT_OVERLAP as int init 6;
  * @field trimFront {int} bases to remove from the 5' end
  * @field trimTail {int} bases to remove from the 3' end
  * @field adapters {list of string} adapters to clip; empty disables clipping,
- *   `qc.defaultAdapters()` is the built-in set
+ *   `qc.defaultAdapters()` is the built-in set; an empty string is rejected,
+ *   duplicates are dropped
  * @field minOverlap {int} shortest partial adapter accepted at the 3' end;
  *   0 for `DEFAULT_OVERLAP`
  * @field qualityThreshold {int} sliding-window mean Phred quality below which
@@ -135,22 +146,20 @@ export func options() {
  * @param outPath {string} output FASTQ; gzipped when the name ends in `.gz`
  * @param opts {Options} what to trim and filter; see `Options` for the zero value
  * @return {Stats} what the run did
- * @throws {Error} kind "ngs.trim" when `inPath` and `outPath` are the same file
- *   or the compressor exits non-zero; as `fastq.open`, `fastq.next` and
- *   `source.create` otherwise
+ * @throws {Error} kind "ngs.trim" when `inPath` and `outPath` are the same file,
+ *   an adapter is empty, a quality string's byte length differs from its
+ *   sequence or a quality byte is outside `offset`..126, the temporary output
+ *   cannot be created, or the compressor exits non-zero; as `fastq.open`,
+ *   `fastq.next` and `source.create` otherwise
  */
 export func run(inPath as string, outPath as string, opts as Options) {
-    if (core.sameFile($inPath, $outPath)) {
-        core.fail(
-            "trim",
-            "input and output are the same file (" + $outPath +
-                "); the output is opened for writing before the input is read, " +
-                "which would truncate it");
-    }
+    refuseSameFile($inPath, $outPath);
     def cfg as Options init normalize($opts);
+    def tmp as string init stagingPath($outPath);
+    errdefer quietRemove($tmp);
     def r as fastq.Reader init fastq.open($inPath);
     errdefer quietClose($r);
-    def k as source.Sink init source.create($outPath);
+    def k as source.Sink init source.create($tmp);
     errdefer quietCloseSink($k);
     def st as Stats init Stats{
         readsIn: 0,
@@ -192,12 +201,7 @@ export func run(inPath as string, outPath as string, opts as Options) {
         }
     }
     fastq.close($r);
-    def code as int init source.closeSink($k);
-    if ($code != 0) {
-        core.fail(
-            "trim",
-            "compressor for " + $outPath + " exited with code " + convert.toString($code));
-    }
+    commit($k, $tmp, $outPath);
     return $st;
 }
 
@@ -207,6 +211,7 @@ export func run(inPath as string, outPath as string, opts as Options) {
  * @param rec {Read} record to trim
  * @param opts {Options} what to trim; the zero value returns the record unchanged
  * @return {Read} the trimmed record, possibly empty
+ * @throws {Error} kind "ngs.trim" as `clipAdapters` and `clipQuality`
  */
 export func trimRead(rec as fastq.Read, opts as Options) {
     def cfg as Options init normalize($opts);
@@ -221,7 +226,7 @@ export func trimRead(rec as fastq.Read, opts as Options) {
  *
  * @param rec {Read} the record
  * @param front {int} bases to remove from the 5' end; negative counts as 0
- * @param tail {int} bases to remove from the 3' end
+ * @param tail {int} bases to remove from the 3' end; negative counts as 0
  * @return {Read} the clipped record, empty when the cuts overlap
  */
 export func clipFixed(rec as fastq.Read, front as int, tail as int) {
@@ -232,7 +237,11 @@ export func clipFixed(rec as fastq.Read, front as int, tail as int) {
     if ($start < 0) {
         $start = 0;
     }
-    def stop as int init len($rec.seq) - $tail;
+    def cut as int init $tail;
+    if ($cut < 0) {
+        $cut = 0;
+    }
+    def stop as int init len($rec.seq) - $cut;
     if ($stop < $start) {
         $stop = $start;
     }
@@ -252,6 +261,7 @@ export func clipFixed(rec as fastq.Read, front as int, tail as int) {
  * @param minOverlap {int} shortest partial adapter accepted at the 3' end; 0
  *   or less for `DEFAULT_OVERLAP`
  * @return {Read} the clipped record, unchanged when no adapter is found
+ * @throws {Error} kind "ngs.trim" when an adapter is the empty string
  */
 export func clipAdapters(rec as fastq.Read, adapters as list of string, minOverlap as int) {
     if (len($adapters) == 0 or len($rec.seq) == 0) {
@@ -277,6 +287,8 @@ export func clipAdapters(rec as fastq.Read, adapters as list of string, minOverl
  * @param minOverlap {int} shortest partial adapter accepted at the 3' end; 0
  *   or less for `DEFAULT_OVERLAP`
  * @return {int} zero-based cut position, -1 when no adapter is found
+ * @throws {Error} kind "ngs.trim" when an adapter is the empty string, which
+ *   would match at position 0 and clip every read to nothing
  */
 export func adapterStart(seq as string, adapters as list of string, minOverlap as int) {
     def overlap as int init $minOverlap;
@@ -285,6 +297,9 @@ export func adapterStart(seq as string, adapters as list of string, minOverlap a
     }
     def best as int init -1;
     for (def probe in $adapters) {
+        if (len($probe) == 0) {
+            core.fail("trim", "empty adapter sequence");
+        }
         def at as int init strings.indexOf($seq, $probe);
         if ($at < 0) {
             $at = partialAt($seq, $probe, $overlap);
@@ -308,10 +323,16 @@ export func adapterStart(seq as string, adapters as list of string, minOverlap a
  * @param window {int} window width; 0 for `DEFAULT_WINDOW`
  * @param offset {int} quality encoding offset, e.g. `fastq.PHRED33`
  * @return {Read} the trimmed record
+ * @throws {Error} kind "ngs.trim" when the quality and sequence lengths
+ *   differ, or as `qualityKeepLength`; together the two checks make the
+ *   quality's length in bytes equal the sequence length
  */
 export func clipQuality(rec as fastq.Read, threshold as int, window as int, offset as int) {
     if ($threshold <= 0 or len($rec.qual) == 0) {
         return $rec;
+    }
+    if (len($rec.qual) != len($rec.seq)) {
+        core.fail("trim", "quality and sequence lengths differ in read " + $rec.id);
     }
     def keep as int init qualityKeepLength($rec.qual, $threshold, $window, $offset);
     if ($keep >= len($rec.seq)) {
@@ -323,18 +344,33 @@ export func clipQuality(rec as fastq.Read, threshold as int, window as int, offs
 /**
  * How many bases survive sliding-window quality trimming.
  *
- * A window wider than the read shrinks to the read length.
+ * A window wider than the read shrinks to the read length. One score per
+ * byte; the whole string is range-checked first with one native regex match.
  *
  * @param qual {string} raw quality string
  * @param threshold {int} mean Phred quality a window must reach
  * @param window {int} window width; 0 for `DEFAULT_WINDOW`
  * @param offset {int} quality encoding offset
  * @return {int} number of bases to keep from the 5' end
+ * @throws {Error} kind "ngs.trim" when a character is below `offset` or above
+ *   126, `~` (wrong offset, or not a FASTQ quality character)
  */
 export func qualityKeepLength(qual as string, threshold as int, window as int, offset as int) {
     def width as int init $window;
     if ($width < 1) {
         $width = DEFAULT_WINDOW;
+    }
+    def pattern as string init PHRED33_INVALID;
+    if ($offset != fastq.PHRED33) {
+        $pattern = "[^" + regex.escape(convert.fromCodepoint($offset)) + "-~]";
+    }
+    if (regex.matches($pattern, $qual)) {
+        def bad as regex.Match init regex.find($pattern, $qual);
+        core.fail(
+            "trim",
+            "quality character \"" + $bad.text + "\" at " + convert.toString($bad.start) +
+                " outside " + convert.toString($offset) + "..126 for offset " +
+                convert.toString($offset) + "; wrong offset?");
     }
     def raw as bytes init convert.bytesFromString($qual, "utf-8");
     def n as int init len($raw);
@@ -381,7 +417,7 @@ export func truncate(rec as fastq.Read, maxLength as int) {
  *
  * @param rec {Read} trimmed record
  * @param opts {Options} filters to apply; see `Options` for the zero value
- * @return {bool} true when the record should be kept
+ * @return {bool} true when the record should be kept * @throws {Error} kind "ngs.trim" when an adapter in `opts` is the empty string
  */
 export func keeps(rec as fastq.Read, opts as Options) {
     def cfg as Options init normalize($opts);
@@ -408,25 +444,21 @@ export func keeps(rec as fastq.Read, opts as Options) {
  * @param everyNth {int} keep one read in every N; 1 or less keeps every read
  * @param maxReads {int} stop after writing this many reads; 0 for no limit
  * @return {Stats} read and written counts; the trimming counters stay 0
- * @throws {Error} kind "ngs.trim" when `inPath` and `outPath` are the same file
- *   or the compressor exits non-zero; as `fastq.open` and `source.create`
- *   otherwise
+ * @throws {Error} kind "ngs.trim" when `inPath` and `outPath` are the same file,
+ *   the temporary output cannot be created, or the compressor exits non-zero;
+ *   as `fastq.open` and `source.create` otherwise
  */
 export func subsampleEvery(inPath as string, outPath as string, everyNth as int, maxReads as int) {
-    if (core.sameFile($inPath, $outPath)) {
-        core.fail(
-            "trim",
-            "input and output are the same file (" + $outPath +
-                "); the output is opened for writing before the input is read, " +
-                "which would truncate it");
-    }
+    refuseSameFile($inPath, $outPath);
     def step as int init $everyNth;
     if ($step < 1) {
         $step = 1;
     }
+    def tmp as string init stagingPath($outPath);
+    errdefer quietRemove($tmp);
     def r as fastq.Reader init fastq.open($inPath);
     errdefer quietClose($r);
-    def k as source.Sink init source.create($outPath);
+    def k as source.Sink init source.create($tmp);
     errdefer quietCloseSink($k);
     def seen as int init 0;
     def kept as int init 0;
@@ -447,12 +479,7 @@ export func subsampleEvery(inPath as string, outPath as string, everyNth as int,
         $basesOut = $basesOut + len($rec.seq);
     }
     fastq.close($r);
-    def code as int init source.closeSink($k);
-    if ($code != 0) {
-        core.fail(
-            "trim",
-            "compressor for " + $outPath + " exited with code " + convert.toString($code));
-    }
+    commit($k, $tmp, $outPath);
     return countsOnly($seen, $kept, $basesIn, $basesOut);
 }
 
@@ -468,23 +495,20 @@ export func subsampleEvery(inPath as string, outPath as string, everyNth as int,
  * @param fraction {float} probability of keeping each read, in (0, 1]
  * @return {Stats} read and written counts; the trimming counters stay 0
  * @throws {Error} kind "ngs.trim" when `fraction` is outside (0, 1], `inPath`
- *   and `outPath` are the same file, or the compressor exits non-zero; as
- *   `fastq.open` and `source.create` otherwise
+ *   and `outPath` are the same file, the temporary output cannot be created,
+ *   or the compressor exits non-zero; as `fastq.open` and `source.create`
+ *   otherwise
  */
 export func subsampleFraction(inPath as string, outPath as string, fraction as float) {
     if ($fraction <= 0.0 or $fraction > 1.0) {
         core.fail("trim", "subsample fraction must be in (0, 1]");
     }
-    if (core.sameFile($inPath, $outPath)) {
-        core.fail(
-            "trim",
-            "input and output are the same file (" + $outPath +
-                "); the output is opened for writing before the input is read, " +
-                "which would truncate it");
-    }
+    refuseSameFile($inPath, $outPath);
+    def tmp as string init stagingPath($outPath);
+    errdefer quietRemove($tmp);
     def r as fastq.Reader init fastq.open($inPath);
     errdefer quietClose($r);
-    def k as source.Sink init source.create($outPath);
+    def k as source.Sink init source.create($tmp);
     errdefer quietCloseSink($k);
     def seen as int init 0;
     def kept as int init 0;
@@ -502,12 +526,7 @@ export func subsampleFraction(inPath as string, outPath as string, fraction as f
         $basesOut = $basesOut + len($rec.seq);
     }
     fastq.close($r);
-    def code as int init source.closeSink($k);
-    if ($code != 0) {
-        core.fail(
-            "trim",
-            "compressor for " + $outPath + " exited with code " + convert.toString($code));
-    }
+    commit($k, $tmp, $outPath);
     return countsOnly($seen, $kept, $basesIn, $basesOut);
 }
 
@@ -516,10 +535,12 @@ export func subsampleFraction(inPath as string, outPath as string, fraction as f
  *
  * @param opts {Options} caller-supplied options
  * @return {Options} the options with `offset`, `windowSize` and `minOverlap`
- *   defaults filled in
+ *   defaults filled in and duplicate adapters dropped
+ * @throws {Error} kind "ngs.trim" when an adapter is the empty string
  */
 func normalize(opts as Options) {
     def cfg as Options init $opts;
+    $cfg.adapters = uniqueProbes($opts.adapters);
     if ($cfg.offset == 0) {
         $cfg.offset = fastq.PHRED33;
     }
@@ -530,6 +551,106 @@ func normalize(opts as Options) {
         $cfg.minOverlap = DEFAULT_OVERLAP;
     }
     return $cfg;
+}
+
+/**
+ * Adapters in first-seen order without duplicates.
+ *
+ * @param probes {list of string} adapters as configured
+ * @return {list of string} each distinct adapter once
+ * @throws {Error} kind "ngs.trim" when an adapter is the empty string
+ */
+func uniqueProbes(probes as list of string) {
+    def seen as map of string to bool init {};
+    def out as list of string init [];
+    for (def probe in $probes) {
+        if (len($probe) == 0) {
+            core.fail("trim", "empty adapter sequence");
+        }
+        if (not maps.has($seen, $probe)) {
+            $seen[$probe] = true;
+            $out[] = $probe;
+        }
+    }
+    return $out;
+}
+
+/**
+ * Raise when two paths resolve to the same file.
+ *
+ * @param inPath {string} input path
+ * @param outPath {string} output path
+ * @throws {Error} kind "ngs.trim" when they resolve to the same file
+ */
+func refuseSameFile(inPath as string, outPath as string) {
+    if (core.sameFile($inPath, $outPath)) {
+        core.fail("trim", "input and output are the same file (" + $outPath + ")");
+    }
+}
+
+/**
+ * Create the temporary file an output is written to before the rename.
+ *
+ * It sits in the output's directory, so the rename stays on one filesystem,
+ * and keeps a `.gz` suffix so `source.create` compresses it.
+ *
+ * @param outPath {string} final output path
+ * @return {string} path of the new, empty temporary file
+ * @throws {Error} kind "ngs.trim" when the file cannot be created
+ */
+func stagingPath(outPath as string) {
+    def suffix as string init "";
+    if (strings.endsWith($outPath, ".gz")) {
+        $suffix = ".gz";
+    }
+    try {
+        return fs.makeTempFile(path.dir($outPath), "." + path.base($outPath) + ".", $suffix);
+    } catch (e) {
+        core.fail(
+            "trim",
+            "cannot create a temporary output beside " + $outPath + ": " + $e.message);
+    }
+    return "";
+}
+
+/**
+ * Close the sink and move the temporary file over the output.
+ *
+ * The temporary file is created owner-only; it is set to 0644, the mode
+ * `fs.open` gives a new file, before the rename.
+ *
+ * @param k {source.Sink} sink writing `tmp`
+ * @param tmp {string} temporary file
+ * @param outPath {string} final output path
+ * @throws {Error} kind "ngs.trim" when the compressor exits non-zero
+ */
+func commit(k as source.Sink, tmp as string, outPath as string) {
+    def code as int init source.closeSink($k);
+    if ($code != 0) {
+        core.fail(
+            "trim",
+            "compressor for " + $outPath + " exited with code " + convert.toString($code));
+    }
+    fs.chmod($tmp, 0o644);
+    fs.rename($tmp, $outPath);
+}
+
+/**
+ * Remove a temporary output on a failing path, without raising.
+ *
+ * @param tmp {string} file to remove; a missing file is ignored
+ * @return {bool} true when a file was removed
+ */
+func quietRemove(tmp as string) {
+    try {
+        if (fs.exists($tmp)) {
+            fs.remove($tmp);
+            return true;
+        }
+    } catch (e) {
+        return false;
+    }
+    return false;
 }
 
 /**

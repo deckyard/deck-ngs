@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * White-box tests for the trimming, filtering and subsampling module.
@@ -10,6 +10,7 @@ use testing;
 use fs;
 use strings;
 use math;
+use os;
 
 func writeTemp(body as string, suffix as string) {
     def p as string init fs.makeTempFile("", "ngstrim", $suffix);
@@ -295,3 +296,122 @@ func testAdapterStartTakesTheEarliestOfSeveral() {
 #     def bare as Options;
 #     testing.assertEqual(keeps(fastq.parse("@r", "ACGNT", "+", "IIIII"), $bare), true);
 # }
+
+# Fixtures live inside the checkout, under the git-ignored .ci-fixtures/: in CI
+# the interpreter runs in a container that mounts only the workspace.
+func fixtureDir() {
+    fs.mkdirAll(".ci-fixtures");
+    return fs.makeTempDir(".ci-fixtures", "ngstrim");
+}
+
+# Options that trim and drop nothing.
+func keepAll() {
+    def opts as Options;
+    $opts.maxAmbiguous = -1;
+    return $opts;
+}
+
+func testRunLeavesAHardLinkedInputIntact() {
+    # A hard link has its own real path, so `sameFile` cannot see it. Writing
+    # through a temporary file and renaming it means the output gets a new
+    # inode and the input is read in full.
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def input as string init path.join($dir, "in.fastq");
+    def output as string init path.join($dir, "out.fastq");
+    def body as string init fq("a", "ACGTACGTAC", "IIIIIIIIII") +
+        fq("b", "TTTTGGGGCC", "IIIIIIIIII");
+    fs.writeString($input, $body);
+    os.run(["ln", $input, $output]);
+    testing.assertEqual(core.sameFile($input, $output), false);
+    def st as Stats init run($input, $output, keepAll());
+    testing.assertEqual($st.readsIn, 2);
+    testing.assertEqual($st.readsOut, 2);
+    testing.assertEqual(fs.readString($input), $body);
+    testing.assertEqual(fs.readString($output), $body);
+    def sub as Stats init subsampleEvery($input, $output, 2, 0);
+    testing.assertEqual($sub.readsOut, 1);
+    testing.assertEqual(fs.readString($input), $body);
+}
+
+func testFailedRunKeepsTheOldOutputAndLeavesNoTemporary() {
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def input as string init path.join($dir, "in.fastq");
+    def output as string init path.join($dir, "out.fastq");
+    # The second record's quality is one character short: fastq.next raises.
+    fs.writeString($input, fq("a", "ACGT", "IIII") + fq("b", "ACGT", "III"));
+    fs.writeString($output, "old\n");
+    def failed as bool init false;
+    try {
+        run($input, $output, keepAll());
+    } catch (e) {
+        $failed = true;
+    }
+    testing.assertEqual($failed, true);
+    testing.assertEqual(fs.readString($output), "old\n");
+    testing.assertEqual(fs.list($dir), ["in.fastq", "out.fastq"]);
+}
+
+func testRunOutputHasTheUsualFileMode() {
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def input as string init path.join($dir, "in.fastq");
+    def output as string init path.join($dir, "out.fastq");
+    fs.writeString($input, fq("a", "ACGT", "IIII"));
+    subsampleEvery($input, $output, 1, 0);
+    testing.assertEqual(fs.stat($output).mode, 0o644);
+}
+
+func testEmptyAdapterIsRejected() {
+    testing.assertThrows("startWithEmptyAdapter", "ngs.trim");
+    testing.assertThrows("trimWithEmptyAdapter", "ngs.trim");
+}
+
+func startWithEmptyAdapter() {
+    return adapterStart("ACGTACGTAC", ["AGATCGGAAGAGC", ""], 6);
+}
+
+func trimWithEmptyAdapter() {
+    def opts as Options init options();
+    $opts.adapters = [""];
+    return trimRead(fastq.parse("@r", "ACGTACGTAC", "+", "IIIIIIIIII"), $opts);
+}
+
+func testDuplicateAdaptersAreDropped() {
+    def opts as Options init options();
+    $opts.adapters = ["AAAA", "CCCC", "AAAA"];
+    testing.assertEqual(normalize($opts).adapters, ["AAAA", "CCCC"]);
+}
+
+func testClipFixedNegativeTailCountsAsZero() {
+    # front 2 removes "AC"; a tail of -3 removes nothing.
+    def rec as fastq.Read init fastq.parse("@r", "ACGTACGTAC", "+", "0123456789");
+    def got as fastq.Read init clipFixed($rec, 2, -3);
+    testing.assertEqual($got.seq, "GTACGTAC");
+    testing.assertEqual($got.qual, "23456789");
+}
+
+func testQualityOutsideTheOffsetRangeIsRejected() {
+    testing.assertThrows("phred33AsPhred64", "ngs.trim");
+    testing.assertThrows("nonAsciiQuality", "ngs.trim");
+    testing.assertThrows("qualityLengthMismatch", "ngs.trim");
+    # '@' (64) is Phred 0 at offset 64, the lowest valid score: keep nothing.
+    testing.assertEqual(qualityKeepLength("@@@@", 20, 4, 64), 0);
+}
+
+func phred33AsPhred64() {
+    # '#' (35) is below offset 64.
+    return qualityKeepLength("IIII####", 20, 4, 64);
+}
+
+func nonAsciiQuality() {
+    # 'é' is two bytes and not a quality character; read as bytes it shifted
+    # every later score and the keep length came out past the read end.
+    return qualityKeepLength("IIIIIIIé#", 20, 1, 33);
+}
+
+func qualityLengthMismatch() {
+    def rec as fastq.Read init fastq.Read{id: "r", desc: "", seq: "ACGT", qual: "IIIII"};
+    return clipQuality($rec, 20, 4, 33);
+}

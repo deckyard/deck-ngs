@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Streaming read QC over FASTQ, FastQC-lite. One pass gives read and base
@@ -8,8 +8,8 @@
  * histogram, adapter counts and, optionally, per-position mean quality.
  *
  * The interpreter costs roughly a microsecond per step, so the module buffers
- * a batch of records and counts characters with `core.countIn` (a
- * `strings.replace` inside Go): one native scan per character class per batch
+ * a batch of records and counts characters with `core.countIn`
+ * (`strings.count`): one native scan per character class per batch
  * instead of one step per base. That is about ten times faster than a per-base
  * loop, with identical numbers.
  *
@@ -79,7 +79,8 @@ export def const ARTEFACT_POLY_G as string init "GGGGGGGGGG";
  * @field batchSize {int} records per counting batch; 0 for `DEFAULT_BATCH`
  * @field maxBatchBases {int} bases per counting batch; 0 for
  *   `DEFAULT_BATCH_BASES`
- * @field adapters {list of string} sequences to count; empty for `defaultAdapters`
+ * @field adapters {list of string} sequences to count; empty for `defaultAdapters`;
+ *   an empty string is rejected, duplicates are counted once
  */
 export def struct Options {
     maxReads as int,
@@ -163,8 +164,9 @@ export func defaultAdapters() {
  * @param opts {Options} what to measure; the zero value is valid
  * @return {Report} the collected statistics
  * @throws {Error} kind "ngs.source" when the file is missing; kind "ngs.fastq"
- *   on a malformed record; kind "ngs.qc" when a quality character decodes
- *   outside Phred 0-93 (usually the wrong offset)
+ *   on a malformed record; kind "ngs.qc" when an adapter is the empty string
+ *   or a quality character decodes outside Phred 0-93 (usually the wrong
+ *   offset)
  */
 export func analyze(path as string, opts as Options) {
     def cfg as Options init normalize($opts);
@@ -373,6 +375,8 @@ def struct Tally {
  *
  * @param opts {Options} caller-supplied options
  * @return {Options} the same options with 0 fields resolved to their defaults
+ *   and duplicate adapters dropped
+ * @throws {Error} kind "ngs.qc" when an adapter is the empty string
  */
 func normalize(opts as Options) {
     def cfg as Options init $opts;
@@ -391,7 +395,33 @@ func normalize(opts as Options) {
     if (len($cfg.adapters) == 0) {
         $cfg.adapters = defaultAdapters();
     }
+    $cfg.adapters = uniqueProbes($cfg.adapters);
     return $cfg;
+}
+
+/**
+ * Adapter probes in first-seen order without duplicates.
+ *
+ * An empty probe is an error rather than skipped: it would count nothing, and
+ * the same probe list makes `trim` clip every read to nothing.
+ *
+ * @param probes {list of string} probes as configured
+ * @return {list of string} each distinct probe once
+ * @throws {Error} kind "ngs.qc" when a probe is the empty string
+ */
+func uniqueProbes(probes as list of string) {
+    def seen as map of string to bool init {};
+    def out as list of string init [];
+    for (def probe in $probes) {
+        if (len($probe) == 0) {
+            core.fail("qc", "empty adapter sequence");
+        }
+        if (not maps.has($seen, $probe)) {
+            $seen[$probe] = true;
+            $out[] = $probe;
+        }
+    }
+    return $out;
 }
 
 /**

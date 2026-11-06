@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Shared primitives: error construction, Go-speed counting, tab-delimited
@@ -47,9 +47,9 @@ export func fail(what as string, message as string) {
 /**
  * Count non-overlapping occurrences of `needle` in `haystack`.
  *
- * Runs inside Go (`strings.replace` plus two `len`s): one native scan instead
- * of a per-character Jennifer loop. `qc` counts base composition and adapters
- * with it.
+ * `strings.count`, one native scan with no allocation, instead of a
+ * per-character Jennifer loop. `qc` counts base composition and adapters with
+ * it.
  *
  * @param haystack {string} text to scan
  * @param needle {string} substring to count
@@ -59,7 +59,7 @@ export func countIn(haystack as string, needle as string) {
     if (len($needle) == 0) {
         return 0;
     }
-    return (len($haystack) - len(strings.replace($haystack, $needle, ""))) // len($needle);
+    return strings.count($haystack, $needle);
 }
 
 /**
@@ -352,7 +352,9 @@ export func hasTool(name as string) {
  *
  * Resolves symlinks, so `./reads.fq`, `reads.fq` and a link to it compare
  * equal. A path that does not exist is never the same file as anything, itself
- * included, so a not-yet-created output gives `false`.
+ * included, so a not-yet-created output gives `false`. Two hard links to one
+ * file have different real paths and compare unequal; `trim` writes through a
+ * temporary file and a rename, so that case cannot truncate its input.
  *
  * @param a {string} first path
  * @param b {string} second path
