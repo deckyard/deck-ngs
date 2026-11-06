@@ -15,7 +15,7 @@ which the `pipeline` module drives.
 ```yaml
 # deck.yaml
 decks:
-  "@deckyard/ngs": "^0.1.0"
+  "@deckyard/ngs": "^0.2.0"
 ```
 
 `jvc` vendors the deck's `src/` into `vendor/deckyard/ngs/`. Release archives
@@ -23,7 +23,7 @@ are named `deckyard-ngs-<version>.tar.gz`;
 [installing one by hand](https://deckyard.github.io/deck-ngs/getting-started.html)
 is covered in the manual.
 
-Needs Jennifer 0.25.0 or newer. Streaming gzip and `pipeline` need the `exec`
+Needs Jennifer 0.26.0 or newer. Streaming gzip and `pipeline` need the `exec`
 capability (the default `jennifer` binary, not `jennifer-tiny`) and `gzip` and
 `mkfifo` on `PATH`; everything else runs on both binaries.
 

@@ -19,4 +19,4 @@ package:
 #  Only the default binary is listed - `jennifer-tiny` has neither
 # `exec` nor the capability probe this deck's gzip and pipeline layers need.
 engines:
-  jennifer: ">=0.25.0"
+  jennifer: ">=0.26.0"

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * `@deckyard/ngs` - streaming I/O, QC, interval arithmetic and pipeline
@@ -41,7 +41,7 @@ use strings;
 import "./core.j" as core;
 
 /** Deck version, kept by hand: `tools/inject-version.sh` does not stamp it. */
-export def const VERSION as string init "0.1.0";
+export def const VERSION as string init "0.3.0-dev";
 
 /** Package name. */
 export def const NAME as string init "@deckyard/ngs";
@@ -80,7 +80,7 @@ export func capabilities() {
 
 /**
  * A one-line description of the deck and what this host supports, e.g.
- * `@deckyard/ngs 0.1.0 (streaming gzip, external tools)`.
+ * `@deckyard/ngs 0.3.0-dev (streaming gzip, external tools)`.
  *
  * @return {string} the status line, no trailing newline
  */

@@ -5,7 +5,7 @@
 ```yaml
 # deck.yaml
 decks:
-  "@deckyard/ngs": "^0.1.0"
+  "@deckyard/ngs": "^0.2.0"
 ```
 
 The `@` in `@deckyard/ngs` is replaced by the vendor root, so the deck lands in
@@ -18,14 +18,14 @@ top-level directory. To vendor it by hand, strip both levels:
 
 ```sh
 mkdir -p vendor/deckyard/ngs
-tar -xzf deckyard-ngs-0.1.0.tar.gz -C vendor/deckyard/ngs \
-    --strip-components=2 deckyard-ngs-0.1.0/src
+tar -xzf deckyard-ngs-0.2.0.tar.gz -C vendor/deckyard/ngs \
+    --strip-components=2 deckyard-ngs-0.2.0/src
 ```
 
 The vendor root is resolved as `--vendor`, then `JENNIFER_VENDOR`, then the
 nearest `vendor/` directory above the program.
 
-Every file in `src/` carries a `# pragma-jennifer-version: >=0.25.0` header, so
+Every file in `src/` carries a `# pragma-jennifer-version: >=0.26.0` header, so
 an older interpreter refuses to load the deck. `deck.yaml` declares the same
 floor under `engines`.
 
@@ -62,7 +62,7 @@ import "@deckyard/ngs/" as ngs;
 
 def caps as ngs.Capabilities init ngs.capabilities();
 io.printf("%s\n", ngs.describe());
-# @deckyard/ngs 0.1.0 (streaming gzip, external tools)
+# @deckyard/ngs 0.3.0-dev (streaming gzip, external tools)
 
 if (not $caps.streamingGzip) {
     io.eprintf("no exec capability: gzip input will have to be buffered\n");
@@ -98,6 +98,11 @@ The deck defends against:
 - filenames containing spaces, quotes, backticks, `$(...)`, `;` or `|`, which
   are shell-quoted before they reach `gzip`;
 - a failed open, which removes its FIFO and reaps its decompressor;
+- a FIFO or device passed to `open`, which is refused rather than sniffed (that
+  dropped bytes or blocked), and a `.gz` output path that cannot be created,
+  which raises at once instead of hanging;
+- writers given a field with a tab or line break, which raise instead of
+  writing a shifted or split record;
 - another local user substituting the FIFO, which is created inside a `0700`
   directory;
 - `trim` writing its output over its own input, which it refuses.
