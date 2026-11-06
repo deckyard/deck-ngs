@@ -382,14 +382,14 @@ export func qualityKeepLength(qual as string, threshold as int, window as int, o
     }
     def running as int init 0;
     for (def i in 0..$width) {
-        $running = $running + ($raw[$i] -$offset);
+        $running = $running + ($raw[$i] - $offset);
     }
     def limit as int init $threshold * $width;
     if ($running < $limit) {
         return 0;
     }
     for (def start in 1..($n - $width + 1)) {
-        $running = $running - ($raw[$start - 1] -$offset) + ($raw[$start + $width - 1] -$offset);
+        $running = $running - ($raw[$start - 1] - $offset) + ($raw[$start + $width - 1] - $offset);
         if ($running < $limit) {
             return $start;
         }

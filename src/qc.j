@@ -213,7 +213,7 @@ export func analyze(path as string, opts as Options) {
                 $counts[] = 0;
             }
             for (def i in 0..len($raw)) {
-                $sums[$i] = $sums[$i] + ($raw[$i] -$cfg.offset);
+                $sums[$i] = $sums[$i] + ($raw[$i] - $cfg.offset);
                 $counts[$i] = $counts[$i] + 1;
             }
         }

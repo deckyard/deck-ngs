@@ -335,7 +335,7 @@ export func qualities(rec as Read, offset as int) {
     def raw as bytes init convert.bytesFromString($rec.qual, "utf-8");
     def out as list of int init [];
     for (def i in 0..len($raw)) {
-        $out[] = $raw[$i] -$offset;
+        $out[] = $raw[$i] - $offset;
     }
     return $out;
 }
@@ -357,7 +357,7 @@ export func meanQuality(rec as Read, offset as int) {
     def raw as bytes init convert.bytesFromString($rec.qual, "utf-8");
     def total as int init 0;
     for (def i in 0..len($raw)) {
-        $total = $total + ($raw[$i] -$offset);
+        $total = $total + ($raw[$i] - $offset);
     }
     return $total / len($raw);
 }
@@ -374,9 +374,9 @@ export func minQuality(rec as Read, offset as int) {
         return -1;
     }
     def raw as bytes init convert.bytesFromString($rec.qual, "utf-8");
-    def lowest as int init $raw[0] -$offset;
+    def lowest as int init $raw[0] - $offset;
     for (def i in 0..len($raw)) {
-        def q as int init $raw[$i] -$offset;
+        def q as int init $raw[$i] - $offset;
         if ($q < $lowest) {
             $lowest = $q;
         }
