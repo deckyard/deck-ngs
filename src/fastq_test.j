@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 /**
  * White-box tests for the FASTQ reader.
  * Run with: jennifer test fastq_test.j
@@ -125,4 +125,84 @@ func testOpenStdinWrapsTheStdinSource() {
     testing.assertEqual($r.src.origin, "<stdin>");
     testing.assertEqual($r.src.piped, false);
     testing.assertEqual(close($r), 0);
+}
+
+func testTrailingBlankLinesAreSkipped() {
+    # LF and CRLF blank lines after the last record; hasNext used to report
+    # them as a record and next then failed with an empty header.
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def p as string init $dir + "/blank.fastq";
+    fs.writeString($p, "@a\nACGT\n+\nIIII\n\n\r\n\n");
+    def r as Reader init open($p);
+    def ids as list of string init [];
+    while (hasNext($r)) {
+        $ids[] = next($r).id;
+    }
+    closeStrict($r);
+    testing.assertEqual($ids, ["a"]);
+}
+
+func testBlankLinesBeforeAHeaderAreSkipped() {
+    # next without a hasNext probe skips them itself.
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def p as string init $dir + "/gap.fastq";
+    fs.writeString($p, "@a\nAC\n+\nII\n\n@b\nGG\n+\n!!\n");
+    def r as Reader init open($p);
+    next($r);
+    def second as Read init next($r);
+    closeStrict($r);
+    testing.assertEqual($second.id, "b");
+}
+
+func testNextPastTheEndRaisesNgsFastq() {
+    # The header read sat outside the try, so this was a bare "runtime".
+    testing.assertThrows("pastTheEnd", "ngs.fastq");
+}
+
+func pastTheEnd() {
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def p as string init $dir + "/one.fastq";
+    fs.writeString($p, "@a\nAC\n+\nII\n");
+    def r as Reader init open($p);
+    next($r);
+    return next($r).id;
+}
+
+func parseQuality(seq as string, qual as string) {
+    return parse("@r", $seq, "+", $qual).id;
+}
+
+func testQualityOutsidePrintableAsciiIsRejected() {
+    # 33..126 is the whole FASTQ alphabet. "é" is two bytes: it used to pass as
+    # one rune and decode to two scores (195-33, 169-33).
+    testing.assertThrowsWith("parseQuality", ["AC", "Ié"], "ngs.fastq");
+    testing.assertThrowsWith("parseQuality", ["AC", "I "], "ngs.fastq");
+    testing.assertThrowsWith("parseQuality", ["AC", "I\t"], "ngs.fastq");
+    testing.assertThrowsWith("parseQuality", ["AC", "I\u007f"], "ngs.fastq");
+    # Both ends of the range are accepted.
+    testing.assertEqual(qualities(parse("@r", "AC", "+", "!~"), PHRED33), [0, 93]);
+}
+
+func testSequenceAndQualityLengthsCompareInBytes() {
+    # "Aé" is 2 runes but 3 bytes against a 2-byte quality.
+    testing.assertThrowsWith("parseQuality", ["Aé", "II"], "ngs.fastq");
+}
+
+func formatOf(id as string, desc as string, seq as string, qual as string) {
+    return format(Read{id: $id, desc: $desc, seq: $seq, qual: $qual});
+}
+
+func testFormatRejectsFieldsThatBreakTheRecord() {
+    # Each of these used to be written and then read back as something else.
+    testing.assertThrowsWith("formatOf", ["a b", "", "A", "I"], "ngs.fastq");
+    testing.assertThrowsWith("formatOf", ["x\nACGT\n+\nIIII\n@y", "", "A", "I"], "ngs.fastq");
+    testing.assertThrowsWith("formatOf", ["a", "note\n@z", "A", "I"], "ngs.fastq");
+    testing.assertThrowsWith("formatOf", ["a", "", "A\tC", "II"], "ngs.fastq");
+    testing.assertThrowsWith("formatOf", ["a", "", "AC", "I"], "ngs.fastq");
+    testing.assertThrowsWith("formatOf", ["a", "", "A", "\n"], "ngs.fastq");
+    # A tab in the description is kept: samtools fastq -T writes tags there.
+    testing.assertEqual(formatOf("a", "BC:Z:x\tRX:Z:y", "A", "I"), "@a BC:Z:x\tRX:Z:y\nA\n+\nI\n");
 }

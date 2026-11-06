@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 /**
  * White-box tests for the GFF3 / GTF reader.
  * Run with: jennifer test gff_test.j
@@ -51,7 +51,8 @@ func testRoundTripThroughInterval() {
 func testAttributeEscaping() {
     def attrs as map of string to string init {"Note": "a;b=c,d"};
     def text as string init formatAttributes($attrs, STYLE_GFF3);
-    testing.assertEqual($text, "Note=a%3Bb%3Dc%2Cd");
+    # ',' is the GFF3 multi-value separator and is left unescaped.
+    testing.assertEqual($text, "Note=a%3Bb%3Dc,d");
     def back as map of string to string init parseAttributes($text);
     testing.assertEqual($back["Note"], "a;b=c,d");
 }
@@ -150,4 +151,59 @@ func testOpenStdinWrapsTheStdinSource() {
     }
     testing.assertEqual($r.src.origin, "<stdin>");
     testing.assertEqual(close($r), 0);
+}
+
+func testMultiValuedParentRoundTrips() {
+    # Escaping ',' turned Parent=t1,t2 into one parent named "t1,t2".
+    def line as string init "chr1\ts\texon\t1\t10\t.\t+\t.\tID=e1;Parent=t1,t2";
+    testing.assertEqual(format(parse($line), STYLE_GFF3), $line);
+}
+
+func testRepeatedKeysJoinWithComma() {
+    # GTF repeats a key per value; GFF3 Dbxref written twice. Both used to keep
+    # only the last value.
+    def gtf as map of string to string init parseAttributes(
+        "gene_id \"g\"; tag \"basic\"; tag \"CCDS\";");
+    testing.assertEqual($gtf, {"gene_id": "g", "tag": "basic,CCDS"});
+    def gff3 as map of string to string init parseAttributes("ID=a;Dbxref=x;Dbxref=y");
+    testing.assertEqual($gff3, {"ID": "a", "Dbxref": "x,y"});
+}
+
+func testGtfSemicolonInsideQuotesDoesNotSplit() {
+    def m as map of string to string init parseAttributes("gene_id \"g\"; note \"a; b\";");
+    testing.assertEqual($m, {"gene_id": "g", "note": "a; b"});
+    testing.assertThrowsWith("attrsOf", ["gene_id \"g; level 2;"], "ngs.gff");
+}
+
+func attrsOf(text as string) {
+    return parseAttributes($text);
+}
+
+func formatWith(seqid as string, key as string, value as string, style as string) {
+    def f as Feature init parse("chr1\ts\texon\t1\t10\t.\t+\t.\tID=a");
+    $f.seqid = $seqid;
+    $f.attributes[$key] = $value;
+    return format($f, $style);
+}
+
+func testFormatRejectsFieldsThatBreakTheRecord() {
+    testing.assertThrowsWith("formatWith", ["chr1\tX", "k", "v", STYLE_GFF3], "ngs.gff");
+    testing.assertThrowsWith("formatWith", ["chr1\n", "k", "v", STYLE_GFF3], "ngs.gff");
+    testing.assertThrowsWith("formatWith", ["chr1", "k=x", "v", STYLE_GFF3], "ngs.gff");
+    testing.assertThrowsWith("formatWith", ["chr1", "k x", "v", STYLE_GTF], "ngs.gff");
+    # GTF has no escape: a quote in a value used to inject a new attribute.
+    testing.assertThrowsWith("formatWith", ["chr1", "note", "x\"; evil \"1", STYLE_GTF], "ngs.gff");
+    testing.assertThrowsWith("formatWith", ["chr1", "note", "x\ty", STYLE_GTF], "ngs.gff");
+    # GFF3 escapes those instead.
+    testing.assertEqual(
+        formatWith("chr1", "note", "x\"\ty", STYLE_GFF3),
+        "chr1\ts\texon\t1\t10\t.\t+\t.\tID=a;note=x\"%09y");
+}
+
+func testUnknownStrandBecomesDotOnConversion() {
+    # GFF3 "?" is a strand that is relevant but unknown; intervals know only
+    # "+", "-" and ".".
+    def f as Feature init parse("chr1\ts\tgene\t1\t10\t.\t?\t.\tID=a");
+    testing.assertEqual($f.strand, "?");
+    testing.assertEqual(toInterval($f).strand, ".");
 }

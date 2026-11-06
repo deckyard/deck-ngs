@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Streaming VCF reading and writing.
@@ -19,6 +19,7 @@ use convert;
 use fs;
 use maps;
 use lists;
+use regex;
 import "./core.j" as core;
 import "./source.j" as source;
 import "./intervals.j" as intervals;
@@ -28,6 +29,24 @@ export def const MISSING as string init ".";
 
 /** Columns before the first sample column: the eight fixed ones plus FORMAT. */
 export def const FIXED_COLUMNS as int init 9;
+
+# VCF 4.3 INFO escapes and their characters, in decoding order: `%25` last.
+def const DECODE_TABLE as list of list of string init [
+    ["%3A", ":"],
+    ["%3a", ":"],
+    ["%3B", ";"],
+    ["%3b", ";"],
+    ["%3D", "="],
+    ["%3d", "="],
+    ["%2C", ","],
+    ["%2c", ","],
+    ["%0D", "\r"],
+    ["%0d", "\r"],
+    ["%0A", "\n"],
+    ["%0a", "\n"],
+    ["%09", core.TAB],
+    ["%25", "%"]
+];
 
 /**
  * One VCF variant record.
@@ -39,7 +58,8 @@ export def const FIXED_COLUMNS as int init 9;
  * @field alt {list of string} alternate alleles, empty when "."
  * @field qual {float} Phred-scaled quality, -1.0 when "."
  * @field filter {string} FILTER column verbatim, e.g. "PASS"
- * @field info {map of string to string} parsed INFO; a flag maps to ""
+ * @field info {map of string to string} parsed INFO, values percent-decoded; a
+ *   flag maps to ""
  * @field format {list of string} FORMAT keys, in column order
  * @field samples {list of string} per-sample columns verbatim
  */
@@ -247,26 +267,41 @@ func parseRow(line as string) {
  * Parse a VCF INFO column into a map.
  *
  * A `key=value` entry maps to the text after the first `=`; a flag maps to "",
- * so test a flag with `hasInfo`. Values are not split on `,`.
+ * so test a flag with `hasInfo`. Values are percent-decoded as VCF 4.3 writes
+ * them (`%3A` `%3B` `%3D` `%25` `%2C` `%0D` `%0A` `%09`, either hex case);
+ * any other `%` is kept. Values are not split on `,`: a multi-valued field
+ * such as `AF=0.1,0.2` stays one string, so a decoded `%2C` is
+ * indistinguishable from the separator.
  *
  * @param text {string} raw INFO column
  * @return {map of string to string} keys to values in column order, empty for "." or ""
+ * @throws {Error} kind "ngs.vcf" when a key appears twice
  */
 export func parseInfo(text as string) {
     def out as map of string to string init {};
     if ($text == MISSING or len($text) == 0) {
         return $out;
     }
+    # One scan of the column decides whether any value needs decoding.
+    def encoded as bool init strings.indexOf($text, "%") >= 0;
     for (def entry in strings.split($text, ";")) {
         if (len($entry) == 0) {
             continue;
         }
         def cut as int init strings.indexOf($entry, "=");
-        if ($cut < 0) {
-            $out[$entry] = "";
-            continue;
+        def key as string init $entry;
+        def value as string init "";
+        if ($cut >= 0) {
+            $key = strings.substring($entry, 0, $cut);
+            $value = strings.substring($entry, $cut + 1);
+            if ($encoded) {
+                $value = percentDecode($value);
+            }
         }
-        $out[strings.substring($entry, 0, $cut)] = strings.substring($entry, $cut + 1);
+        if (maps.has($out, $key)) {
+            core.fail("vcf", "INFO key " + $key + " appears twice: " + $text);
+        }
+        $out[$key] = $value;
     }
     return $out;
 }
@@ -405,11 +440,16 @@ export func toInterval(v as Variant) {
 }
 
 /**
- * Render a variant as a VCF line. FORMAT is written only when `format` is not
- * empty; QUAL goes through `convert.toString`, so 60 is written "60.0".
+ * Render a variant as a VCF line. FORMAT is written when `format` is not
+ * empty, and as "." when it is empty but `samples` is not, so the sample
+ * columns stay in place. An empty FILTER is written "."; QUAL goes through
+ * `convert.toString`, so 60 is written "60.0". INFO is rendered by
+ * `formatInfo`.
  *
  * @param v {Variant} the variant
  * @return {string} one tab-delimited record, no trailing newline
+ * @throws {Error} kind "ngs.vcf" when a column (other than INFO, which is
+ *   encoded) contains a tab, CR or LF, or as `formatInfo`
  */
 export func format(v as Variant) {
     def id as string init $v.id;
@@ -424,6 +464,10 @@ export func format(v as Variant) {
     if ($v.qual >= 0.0) {
         $qual = convert.toString($v.qual);
     }
+    def filter as string init $v.filter;
+    if (len($filter) == 0) {
+        $filter = MISSING;
+    }
     def columns as list of string init [
         $v.chrom,
         core.padNum($v.pos, 1),
@@ -431,38 +475,96 @@ export func format(v as Variant) {
         $v.ref,
         $alt,
         $qual,
-        $v.filter,
+        $filter,
         formatInfo($v.info)
     ];
     if (len($v.format) > 0) {
         $columns[] = strings.join($v.format, ":");
+    } elseif (len($v.samples) > 0) {
+        $columns[] = MISSING;
     }
     for (def col in $v.samples) {
         $columns[] = $col;
     }
-    return strings.join($columns, core.TAB);
+    def line as string init strings.join($columns, core.TAB);
+    if (strings.count($line, core.TAB) != len($columns) - 1 or strings.indexOf($line, "\n") >= 0 or
+        strings.indexOf($line, "\r") >= 0) {
+        core.fail(
+            "vcf",
+            "a column contains a tab or line break at " + $v.chrom + ":" +
+                convert.toString($v.pos));
+    }
+    return $line;
 }
 
 /**
  * Render an INFO map as column text; an entry with an empty value is written
  * as a flag.
  *
+ * Values are percent-encoded as VCF 4.3 requires: `%` `:` `;` `=` CR LF and
+ * tab. `,` is left alone, because it separates the values of a multi-valued
+ * field held as one string.
+ *
  * @param entries {map of string to string} INFO keys to values, in output order
  * @return {string} the INFO column, "." when empty
+ * @throws {Error} kind "ngs.vcf" on an empty key or a key containing `;`, `=`,
+ *   whitespace, CR or LF
  */
 export func formatInfo(entries as map of string to string) {
     def parts as list of string init [];
     for (def key in $entries) {
+        if (len($key) == 0 or regex.matches("[;=\\s]", $key)) {
+            core.fail("vcf", "INFO key empty or with ';', '=' or whitespace: \"" + $key + "\"");
+        }
         if (len($entries[$key]) == 0) {
             $parts[] = $key;
         } else {
-            $parts[] = $key + "=" + $entries[$key];
+            $parts[] = $key + "=" + percentEncode($entries[$key]);
         }
     }
     if (len($parts) == 0) {
         return MISSING;
     }
     return strings.join($parts, ";");
+}
+
+/**
+ * Percent-encode the characters VCF 4.3 reserves in an INFO value, `%` first
+ * so it is not encoded twice. `,` is not encoded (see `formatInfo`).
+ *
+ * @param s {string} value to encode
+ * @return {string} the encoded value
+ */
+func percentEncode(s as string) {
+    if (not regex.matches("[%:;=\\r\\n\\t]", $s)) {
+        return $s;
+    }
+    def out as string init strings.replace($s, "%", "%25");
+    $out = strings.replace($out, ":", "%3A");
+    $out = strings.replace($out, ";", "%3B");
+    $out = strings.replace($out, "=", "%3D");
+    $out = strings.replace($out, "\r", "%0D");
+    $out = strings.replace($out, "\n", "%0A");
+    return strings.replace($out, core.TAB, "%09");
+}
+
+/**
+ * Decode the VCF 4.3 percent escapes in an INFO value. `%25` goes last so an
+ * encoded `%` followed by hex digits is not decoded a second time; any other
+ * `%` is left as it is (pre-4.3 files write a bare `%`).
+ *
+ * @param s {string} raw value
+ * @return {string} the decoded value
+ */
+func percentDecode(s as string) {
+    if (strings.indexOf($s, "%") < 0) {
+        return $s;
+    }
+    def out as string init $s;
+    for (def pair in DECODE_TABLE) {
+        $out = strings.replace($out, $pair[0], $pair[1]);
+    }
+    return $out;
 }
 
 /**

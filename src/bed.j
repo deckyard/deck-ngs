@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Streaming BED reading and writing. BED and `intervals.Interval` are both
@@ -37,6 +37,9 @@ import "./intervals.j" as intervals;
 
 /** Placeholder read and written for an absent name, score or strand. */
 export def const MISSING as string init ".";
+
+# Magnitude from which `formatScore` keeps a score in float notation.
+def const WHOLE_LIMIT as float init 1e15;
 
 /**
  * A streaming BED cursor.
@@ -130,7 +133,7 @@ export func closeStrict(r as Reader) {
  * @return {Interval} the parsed feature
  * @throws {Error} kind "ngs.bed" on fewer than three columns or a non-numeric
  *   coordinate or score; kind "ngs.intervals" on negative or inverted
- *   coordinates
+ *   coordinates or a strand other than +, - or .
  */
 export func parse(line as string) {
     try {
@@ -181,10 +184,13 @@ func parseRow(line as string) {
 
 /**
  * Render an interval as a BED6 line. An empty name or strand is written ".";
- * a whole-number score is written without a decimal part.
+ * a whole-number score below 10^15 in magnitude is written without a decimal
+ * part, any other score as `convert.toString` renders it.
  *
  * @param iv {Interval} the feature
  * @return {string} tab-delimited BED6, no trailing newline
+ * @throws {Error} kind "ngs.bed" when the chromosome, name or strand contains
+ *   a tab, CR or LF
  */
 export func format(iv as intervals.Interval) {
     def name as string init $iv.name;
@@ -195,7 +201,7 @@ export func format(iv as intervals.Interval) {
     if (len($strand) == 0) {
         $strand = MISSING;
     }
-    return strings.join(
+    def line as string init strings.join(
         [
             $iv.chrom,
             core.padNum($iv.start, 1),
@@ -205,6 +211,11 @@ export func format(iv as intervals.Interval) {
             $strand
         ],
         core.TAB);
+    if (strings.count($line, core.TAB) != 5 or strings.indexOf($line, "\n") >= 0 or
+        strings.indexOf($line, "\r") >= 0) {
+        core.fail("bed", "a field contains a tab or line break in feature: " + $iv.name);
+    }
+    return $line;
 }
 
 /**
@@ -296,10 +307,16 @@ func isDecoration(line as string) {
 /**
  * Render a score, dropping the decimal part when it is a whole number.
  *
+ * Only below 10^15 in magnitude: there every whole float is exact as an int,
+ * and beyond 2^63 `convert.toInt` raises instead of converting.
+ *
  * @param score {float} feature score
  * @return {string} score text
  */
 func formatScore(score as float) {
+    if ($score >= WHOLE_LIMIT or $score <= -WHOLE_LIMIT) {
+        return convert.toString($score);
+    }
     def rounded as int init convert.toInt($score);
     if ($rounded == $score) {
         return convert.toString($rounded);

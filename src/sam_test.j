@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 /**
  * White-box tests for the SAM reader.
  * Run with: jennifer test sam_test.j
  */
 use testing;
 use fs;
+use os;
+use task;
+use path;
 
 func temp(body as string, suffix as string) {
     def p as string init fs.makeTempFile("", "ngssam", $suffix);
@@ -122,4 +125,95 @@ func testOpenStdinLeavesTheHeaderEmpty() {
     testing.assertEqual(len($r.header), 0);
     testing.assertEqual($r.src.origin, "<stdin>");
     testing.assertEqual(close($r), 0);
+}
+
+func samLine(cigar as string, seq as string) {
+    return parse("r1\t0\tchr1\t100\t60\t" + $cigar + "\t*\t0\t0\t" + $seq + "\t*");
+}
+
+func testToIntervalWithoutReferenceSpanCoversOneBase() {
+    # POS 100 is 0-based 99. A "*" CIGAR used to take len(seq) (here 4) and a
+    # clip-only CIGAR the clipped bases; htslib's bam_endpos gives pos + 1.
+    def star as intervals.Interval init toInterval(samLine("*", "ACGT"));
+    testing.assertEqual([$star.start, $star.end], [99, 100]);
+    def clipped as intervals.Interval init toInterval(samLine("10S", "ACGTACGTAC"));
+    testing.assertEqual([$clipped.start, $clipped.end], [99, 100]);
+    def inserted as intervals.Interval init toInterval(samLine("2S3I", "ACGTA"));
+    testing.assertEqual([$inserted.start, $inserted.end], [99, 100]);
+}
+
+func testCigarSpansAgreeWithParseCigar() {
+    # 3S10M2D5M1I4N2=1X1H1P: reference M10 D2 M5 N4 =2 X1 = 24;
+    # query S3 M10 M5 I1 =2 X1 = 22. Cross-checked against the parsed ops.
+    def cigar as string init "3S10M2D5M1I4N2=1X1H1P";
+    testing.assertEqual(referenceLength($cigar), 24);
+    testing.assertEqual(queryLength($cigar), 22);
+    def ref as int init 0;
+    def query as int init 0;
+    for (def op in parseCigar($cigar)) {
+        if (strings.contains("MDN=X", $op.op)) {
+            $ref = $ref + $op.length;
+        }
+        if (strings.contains("MIS=X", $op.op)) {
+            $query = $query + $op.length;
+        }
+    }
+    testing.assertEqual($ref, 24);
+    testing.assertEqual($query, 22);
+    testing.assertEqual(referenceLength("150M"), 150);
+    testing.assertEqual(queryLength("*"), 0);
+}
+
+func testMalformedCigarSpansRaiseNgsSam() {
+    testing.assertThrowsWith("refLength", ["M"], "ngs.sam");
+    testing.assertThrowsWith("refLength", ["10M5"], "ngs.sam");
+    testing.assertThrowsWith("refLength", ["9999999999999999999M"], "ngs.sam");
+    # Ten 18-digit lengths, about 1e19, overflow the int64 total.
+    testing.assertThrowsWith("refLength", [strings.repeat("999999999999999999M", 10)], "ngs.sam");
+}
+
+func refLength(cigar as string) {
+    return referenceLength($cigar);
+}
+
+func formatWith(qname as string, tag as string) {
+    def rec as Record init samLine("4M", "ACGT");
+    $rec.qname = $qname;
+    $rec.tags = [$tag];
+    return format($rec);
+}
+
+func testFormatRejectsTabsAndLineBreaks() {
+    # A tab shifted every later column; a newline split the record in two.
+    testing.assertThrowsWith("formatWith", ["r\t1", "NM:i:0"], "ngs.sam");
+    testing.assertThrowsWith("formatWith", ["r1", "NM:i:0\nr2"], "ngs.sam");
+    testing.assertThrowsWith("formatWith", ["r1\r", "NM:i:0"], "ngs.sam");
+    testing.assertEqual(
+        formatWith("r1", "NM:i:0"),
+        "r1\t0\tchr1\t100\t60\t4M\t*\t0\t0\tACGT\t*\tNM:i:0");
+}
+
+func testOpenRefusesAFifoInsteadOfBlocking() {
+    # headerOf sniffed and read the FIFO, then open read it again from a
+    # second handle; with no writer the first open blocked.
+    # System temp, not .ci-fixtures: some shared mounts (vboxsf) refuse FIFOs.
+    def dir as string init fs.makeTempDir("", "ngssam");
+    defer fs.removeAll($dir);
+    def fifo as string init path.join($dir, "pipe");
+    testing.assertEqual(os.run(["mkfifo", $fifo]).exitCode, 0);
+    def t as task of string init spawn {
+        try {
+            close(open($fifo));
+        } catch (e) {
+            return $e.kind;
+        }
+        return "none";
+    };
+    def kind as string init "timeout";
+    try {
+        $kind = task.waitTimeout($t, 20000);
+    } catch (e) {
+        task.discard($t);
+    }
+    testing.assertEqual($kind, "ngs.source");
 }

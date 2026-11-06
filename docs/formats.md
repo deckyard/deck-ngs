@@ -78,8 +78,16 @@ is legacy Illumina 1.3-1.7. `qualities`, `meanQuality` and `minQuality` decode
 one base per interpreter step; for whole-file statistics use [`qc`](qc.md).
 
 `parse` and `next` raise `ngs.fastq` on a header not starting with `@`, a
-separator not starting with `+`, a sequence and quality of different lengths,
-or a truncated record. `format` always writes the separator as a bare `+`.
+separator not starting with `+`, a quality byte outside `!`..`~` (ASCII
+33..126), a sequence and quality of different byte lengths, or a truncated
+record; `next` past the end raises `ngs.fastq` too. Blank lines are skipped:
+`hasNext` reads ahead to the next non-blank line and keeps it for `next`, so a
+file ending in empty lines ends cleanly.
+
+`format` always writes the separator as a bare `+`. It raises `ngs.fastq` on a
+record that would not read back as itself: whitespace in `id`, a line break in
+`desc` (a tab is kept, as `samtools fastq -T` writes tags there), a tab or line
+break in `seq`, a bad quality byte or a length mismatch.
 
 [Recipes](recipes.md#convert-fastq-to-fasta) has a streaming FASTQ-to-FASTA
 conversion.
@@ -106,8 +114,11 @@ bed.writeAll("out.bed.gz", $peaks);    # gzipped because of the name
 ```
 
 Readers skip blank lines, `#` comments and `track` / `browser` lines. A record
-with fewer than three columns, or a non-numeric coordinate, raises `ngs.bed`.
-`bed.write` appends one interval to an open sink.
+with fewer than three columns, or a non-numeric coordinate, raises `ngs.bed`;
+negative or inverted coordinates, or a strand other than `+`, `-` or `.`, raise
+`ngs.intervals`. `bed.write` appends one interval to an open sink. `bed.format`
+raises `ngs.bed` when a chromosome, name or strand contains a tab or line
+break, and keeps a score of 10^15 or more in float notation.
 
 ## GFF3 and GTF
 
@@ -131,9 +142,23 @@ gff.name($f);                      # Name, else gene_name, else identifier
 ```
 
 GFF3 values are percent-decoded on read. On write, only the characters GFF3
-reserves are escaped: tab, newline, carriage return and `%`, plus `;`, `=`, `&`
-and `,` in column 9. Spaces stay as they are. An empty attribute map, or a
-ninth column of `.`, is written as `.`. A score of `0.0` is written as `.`.
+reserves are escaped: tab, newline, carriage return and `%`, plus `;`, `=` and
+`&` in column 9. `,` is not escaped: it separates the values of a multi-valued
+attribute, so `Parent=t1,t2` round-trips as two parents. Spaces stay as they
+are. An empty attribute map, or a ninth column of `.`, is written as `.`. A
+score of `0.0` is written as `.`.
+
+A multi-valued attribute is one string joined with `,`. A key that appears
+more than once - GTF's `tag "basic"; tag "CCDS";`, a GFF3 `Dbxref` written
+twice - reads as its values joined with `,` in file order (`"basic,CCDS"`); a
+GTF write emits that as one quoted value, not as repeated keys. A decoded
+`%2C` cannot be told from the separator. GTF attributes are split on `;`
+outside double quotes, so `note "a; b"` stays one value.
+
+`gff.format` raises `ngs.gff` on a tab or line break in columns 1-8, an
+attribute key that is empty or contains `;`, `=`, `"` or whitespace, and a GTF
+value containing `"`, a tab or a line break, which GTF has no escape for.
+`gff.toInterval` maps the GFF3 strand `?` (relevant but unknown) to `.`.
 
 ```jennifer
 def exons as list of intervals.Interval init gff.readIntervals("genes.gff3", "exon");
@@ -177,7 +202,10 @@ sam.queryLength("10M2I5S");        # 17 - counts M I S = X
 
 `sam.toInterval` derives the end from `referenceLength`, so a spliced or
 deleted alignment gets its reference span rather than its read length
-([details](coordinates.md#what-samtointerval-does-with-cigar)).
+([details](coordinates.md#what-samtointerval-does-with-cigar)). A CIGAR of `*`,
+or one that consumes no reference bases, gives a one-base interval at POS, as
+htslib's `bam_endpos` does. `sam.format` raises `ngs.sam` when a field or tag
+contains a tab or line break.
 
 ### The header
 
@@ -215,7 +243,12 @@ vcf.hasInfo($v, "DB");         # a bare flag maps to ""
 ```
 
 `vcf.parseInfo` and `vcf.formatInfo` convert the INFO column to and from a
-map; a value runs from the first `=` to the end of the entry.
+map; a value runs from the first `=` to the end of the entry. Values are
+percent-encoded on write and decoded on read as VCF 4.3 specifies (`%` `:` `;`
+`=` CR LF tab; `%2C` is decoded too), so a value may contain `;`. `,` is not
+encoded: a multi-valued field such as `AF=0.1,0.2` is one string. A key that
+appears twice raises `ngs.vcf`, as does writing an empty key or one containing
+`;`, `=` or whitespace.
 
 Per-sample values are read by index into the reader's `samples` list:
 
@@ -233,4 +266,6 @@ empty. A record with fewer than eight columns raises `ngs.vcf`.
 
 `vcf.format` reproduces a parsed record, minimal eight-column records included,
 with one exception: QUAL is re-rendered from a float, so an integer QUAL such
-as `60` is written as `60.0`.
+as `60` is written as `60.0`. An empty FILTER is written `.`, and an empty
+FORMAT is written `.` when the record has sample columns, so they stay in
+place. A tab or line break in any other column raises `ngs.vcf`.

@@ -66,7 +66,9 @@ $iv.start;   # 100
 $iv.end;     # 125  - 25 reference bases, not the 20 query bases
 ```
 
-When the CIGAR is `*`, the span falls back to the sequence length. The interval
+When the CIGAR is `*`, or consumes no reference bases (only clips or
+insertions), the interval is the one base at POS, as htslib's `bam_endpos`
+computes it; the read's length says nothing about its reference span. The interval
 is named after the read, scored with MAPQ and stranded from FLAG `0x10`. An
 unmapped record (FLAG `0x4`, or RNAME `*`) raises `ngs.sam`; filter with
 `sam.isUnmapped` first.

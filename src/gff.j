@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Streaming GFF3 and GTF reading and writing.
@@ -21,12 +21,19 @@ use convert;
 use fs;
 use maps;
 use encoding;
+use regex;
 import "./core.j" as core;
 import "./source.j" as source;
 import "./intervals.j" as intervals;
 
 /** Placeholder for an absent column. */
 export def const MISSING as string init ".";
+
+# An attribute key character that would break the ninth column on write.
+def const BAD_KEY as string init "[;=\"\\s]";
+
+# A `;` after an odd number of quotes, i.e. inside a quoted GTF value.
+def const SEMICOLON_IN_QUOTES as string init "^(?:[^\"]*\"[^\"]*\")*[^\"]*\"[^\"]*;";
 
 /** Attribute style: `key=value;` pairs, percent-escaped. */
 export def const STYLE_GFF3 as string init "gff3";
@@ -203,6 +210,12 @@ func parseRow(line as string) {
  * is when the encoding is invalid); a GFF3 entry without `=` maps to "". An
  * empty or "." column yields no attributes.
  *
+ * Multi-valued attributes are one string joined with `,`, the GFF3 convention:
+ * `Parent=t1,t2` stays "t1,t2", and a key that appears more than once (GTF's
+ * repeated `tag "basic"; tag "CCDS";`, a GFF3 `Dbxref` written twice) has its
+ * values joined with `,` in file order. A decoded `%2C` is indistinguishable
+ * from that separator. GTF entries are split on `;` outside double quotes.
+ *
  * @param text {string} raw ninth column
  * @return {map of string to string} attribute keys to values, in file order
  */
@@ -221,11 +234,19 @@ export func parseAttributes(text as string) {
         }
         def cut as int init strings.indexOf($trimmed, "=");
         if ($cut < 0) {
-            $out[$trimmed] = "";
+            if (not maps.has($out, $trimmed)) {
+                $out[$trimmed] = "";
+            }
             continue;
         }
         def key as string init strings.substring($trimmed, 0, $cut);
-        $out[$key] = percentDecode(strings.substring($trimmed, $cut + 1));
+        def value as string init percentDecode(strings.substring($trimmed, $cut + 1));
+        # Written in place, not through a helper: passing the map would copy it.
+        if (maps.has($out, $key)) {
+            $out[$key] = $out[$key] + "," + $value;
+        } else {
+            $out[$key] = $value;
+        }
     }
     return $out;
 }
@@ -312,15 +333,20 @@ export func name(f as Feature) {
 
 /**
  * Convert a feature to a 0-based half-open interval: `start - 1`, `end`
- * unchanged.
+ * unchanged. The GFF3 strand `?` (relevant but unknown) becomes ".", the only
+ * unknown strand an interval holds.
  *
  * @param f {Feature} the feature
  * @return {Interval} the interval, named by `name`, with score and strand
- * @throws {Error} kind "ngs.intervals" when the coordinates are inverted or
- *   start is below 1
+ * @throws {Error} kind "ngs.intervals" when the coordinates are inverted,
+ *   start is below 1, or the strand is not +, -, . or ?
  */
 export func toInterval(f as Feature) {
-    return intervals.named($f.seqid, $f.start - 1, $f.end, name($f), $f.score, $f.strand);
+    def strand as string init $f.strand;
+    if ($strand == "?") {
+        $strand = MISSING;
+    }
+    return intervals.named($f.seqid, $f.start - 1, $f.end, name($f), $f.score, $strand);
 }
 
 /**
@@ -358,6 +384,8 @@ export func fromInterval(iv as intervals.Interval, origin as string, kind as str
  * @param f {Feature} the feature
  * @param style {string} `STYLE_GFF3` or `STYLE_GTF`
  * @return {string} one tab-delimited record, no trailing newline
+ * @throws {Error} kind "ngs.gff" when one of the first eight columns contains a
+ *   tab, CR or LF, or as `formatAttributes`
  */
 export func format(f as Feature, style as string) {
     def phase as string init MISSING;
@@ -379,21 +407,39 @@ export func format(f as Feature, style as string) {
         $phase,
         formatAttributes($f.attributes, $style)
     ];
-    return strings.join($columns, core.TAB);
+    def line as string init strings.join($columns, core.TAB);
+    if (strings.count($line, core.TAB) != 8 or strings.indexOf($line, "\n") >= 0 or
+        strings.indexOf($line, "\r") >= 0) {
+        core.fail("gff", "a column contains a tab or line break in feature: " + identifier($f));
+    }
+    return $line;
 }
 
 /**
  * Render an attribute map in GFF3 style (percent-escaped, see
  * `percentEncode`) or GTF style (quoted, not escaped).
  *
+ * A value holding several `,`-joined values is written as it is: GFF3 reads it
+ * back as a multi-value, GTF as one quoted string (a key repeated on read is
+ * not split back into repeated keys).
+ *
  * @param attrs {map of string to string} attributes in output order
  * @param style {string} `STYLE_GFF3` or `STYLE_GTF`
  * @return {string} the ninth column, "." when there are no attributes
+ * @throws {Error} kind "ngs.gff" on an empty key or one containing `;`, `=`,
+ *   `"` or whitespace, and for GTF on a value containing `"`, tab, CR or LF,
+ *   which GTF cannot escape
  */
 export func formatAttributes(attrs as map of string to string, style as string) {
     def parts as list of string init [];
     for (def key in $attrs) {
+        if (len($key) == 0 or regex.matches(BAD_KEY, $key)) {
+            core.fail("gff", "attribute key empty or with ';', '=', '\"' or whitespace: " + $key);
+        }
         if ($style == STYLE_GTF) {
+            if (regex.matches("[\"\\t\\r\\n]", $attrs[$key])) {
+                core.fail("gff", "GTF value of " + $key + " contains a quote, tab or line break");
+            }
             $parts[] = $key + " \"" + $attrs[$key] + "\"";
         } else {
             $parts[] = $key + "=" + percentEncode($attrs[$key]);
@@ -467,18 +513,46 @@ export func readIntervals(path as string, kind as string) {
  */
 func parseGtfAttributes(text as string) {
     def out as map of string to string init {};
-    for (def pair in strings.split($text, ";")) {
+    # A `;` inside a quoted value does not end the entry: pieces are glued back
+    # together until their quotes balance. One regex scan of the column decides
+    # whether that is needed, so the usual record skips the per-piece counting.
+    def glue as bool init regex.matches(SEMICOLON_IN_QUOTES, $text);
+    def pending as string init "";
+    def inQuote as bool init false;
+    for (def piece in strings.split($text, ";")) {
+        def pair as string init $piece;
+        if ($glue) {
+            if ($inQuote) {
+                $pair = $pending + ";" + $piece;
+            }
+            if (strings.count($pair, "\"") % 2 == 1) {
+                $pending = $pair;
+                $inQuote = true;
+                continue;
+            }
+            $inQuote = false;
+        }
         def trimmed as string init strings.trim($pair);
         if (len($trimmed) == 0) {
             continue;
         }
         def cut as int init strings.indexOf($trimmed, " ");
         if ($cut < 0) {
-            $out[$trimmed] = "";
+            if (not maps.has($out, $trimmed)) {
+                $out[$trimmed] = "";
+            }
             continue;
         }
         def key as string init strings.substring($trimmed, 0, $cut);
-        $out[$key] = unquote(strings.trim(strings.substring($trimmed, $cut + 1)));
+        def value as string init unquote(strings.trim(strings.substring($trimmed, $cut + 1)));
+        if (maps.has($out, $key)) {
+            $out[$key] = $out[$key] + "," + $value;
+        } else {
+            $out[$key] = $value;
+        }
+    }
+    if ($inQuote) {
+        core.fail("gff", "unbalanced quote in GTF attributes: " + $text);
     }
     return $out;
 }
@@ -516,10 +590,11 @@ func percentDecode(s as string) {
 /**
  * Percent-encode the characters GFF3 reserves in an attribute value.
  *
- * Escapes only the reserved set, `%` first so it is not double-escaped: tab,
- * newline, carriage return and `%` (the GFF3 spec's global rule), plus `;`,
- * `=`, `&` and `,` (reserved in column 9). The spec says "no other characters
- * may be encoded", so spaces stay unescaped.
+ * Escapes `%` first so it is not double-escaped: tab, newline, carriage
+ * return and `%` (the GFF3 spec's global rule), plus `;`, `=` and `&`
+ * (reserved in column 9). `,` is not escaped: it separates the values of a
+ * multi-valued attribute held as one string (`Parent=t1,t2`). The spec says
+ * "no other characters may be encoded", so spaces stay unescaped.
  *
  * @param s {string} value to escape
  * @return {string} the escaped value
@@ -529,7 +604,6 @@ func percentEncode(s as string) {
     $out = strings.replace($out, ";", "%3B");
     $out = strings.replace($out, "=", "%3D");
     $out = strings.replace($out, "&", "%26");
-    $out = strings.replace($out, ",", "%2C");
     $out = strings.replace($out, core.TAB, "%09");
     $out = strings.replace($out, "\r", "%0D");
     return strings.replace($out, "\n", "%0A");

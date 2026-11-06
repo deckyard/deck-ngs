@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Streaming line sources and sinks. Every reader in the deck pulls one line
@@ -74,16 +74,17 @@ export def struct Sink {
  * Whether a file starts with the gzip magic number.
  *
  * Sniffs the content, not the extension, so a gzipped `.fq` and a plain `.gz`
- * are both read correctly.
+ * are both read correctly. Only a regular file (or a symlink to one) is
+ * sniffed: reading two bytes from a FIFO, a device or a piped `/dev/stdin`
+ * would consume them, and opening a FIFO with no writer blocks.
  *
  * @param path {string} file to inspect
  * @return {bool} true when the first two bytes are 1f 8b
- * @throws {Error} kind "ngs.source" when the file does not exist
+ * @throws {Error} kind "ngs.source" when the file does not exist or is not a
+ *   regular file
  */
 export func isGzip(path as string) {
-    if (not fs.exists($path)) {
-        core.fail("source", "no such file: " + $path);
-    }
+    requireRegular($path);
     def f as fs.File init fs.open($path, "read");
     def head as bytes init fs.readBytes($f, 2);
     fs.close($f);
@@ -96,10 +97,15 @@ export func isGzip(path as string) {
 /**
  * Open a file for streaming line reads, decompressing gzip transparently.
  *
+ * Gzip is detected by sniffing the file (`isGzip`), which needs a regular
+ * file. A FIFO, a device or `/dev/stdin` on a pipe is refused rather than
+ * read with its first bytes lost: use `openStdin` for standard input and
+ * `openPlain` for any other uncompressed stream.
+ *
  * @param path {string} file to read
  * @return {Source} an open source; close it with `close` or `closeStrict`
- * @throws {Error} kind "ngs.source" when the file is missing, or is gzipped and
- *   the host lacks `exec` or `mkfifo` fails
+ * @throws {Error} kind "ngs.source" when the file is missing or not a regular
+ *   file, or is gzipped and the host lacks `exec` or `mkfifo` fails
  */
 export func open(path as string) {
     if (isGzip($path)) {
@@ -110,6 +116,9 @@ export func open(path as string) {
 
 /**
  * Open an uncompressed file for streaming line reads.
+ *
+ * Opens the path once and does not sniff it, so a FIFO or device works; the
+ * open blocks until a FIFO has a writer.
  *
  * @param path {string} file to read
  * @return {Source} an open source
@@ -248,9 +257,15 @@ export func close(s as Source) {
     }
     def code as int init 0;
     if ($s.piped) {
-        def r as os.Result init os.wait($s.proc);
-        $code = $r.exitCode;
-        os.release($s.proc);
+        # A second close finds the child already released; `os.wait` then
+        # raises a bare runtime error, reported below as the deck's own kind.
+        try {
+            def r as os.Result init os.wait($s.proc);
+            $code = $r.exitCode;
+            os.release($s.proc);
+        } catch (e) {
+            $failure = $failure + "; " + $e.message;
+        }
     }
     discard($s.helper);
     if (len($failure) > 0) {
@@ -311,10 +326,14 @@ export func createPlain(path as string) {
  * Mirrors `openGzip`: lines go into a FIFO that an external `gzip -c`
  * compresses into the target. `closeSink` returns gzip's exit code.
  *
+ * The target is created (truncated) here first, so a path that cannot be
+ * written fails at once. The child's shell opens the FIFO before the target, so
+ * opening the FIFO's write end never waits on a child that has already died.
+ *
  * @param path {string} `.gz` file to create or overwrite
  * @return {Sink} an open sink
- * @throws {Error} kind "ngs.source" without the `exec` capability, or when
- *   `mkfifo` fails
+ * @throws {Error} kind "ngs.source" without the `exec` capability, when the
+ *   target cannot be created, or when `mkfifo` fails
  */
 export func createGzip(path as string) {
     if (not meta.hasCapability("exec")) {
@@ -322,11 +341,20 @@ export func createGzip(path as string) {
             "source",
             "streaming gzip output needs the `exec` capability (default jennifer binary)");
     }
+    # The shell used to open the target first: when that failed it exited
+    # without ever opening the FIFO, and our write-side open below waited for a
+    # reader forever. Create the target here, then let the shell open the FIFO
+    # first, so a later failure surfaces as a broken pipe instead of a hang.
+    try {
+        fs.close(fs.open($path, "write"));
+    } catch (e) {
+        core.fail("source", "cannot create " + $path + ": " + $e.message);
+    }
     def work as string init makeFifoDir("ngswrite");
     errdefer discard($work);
     def fifo as string init fifoIn($work);
-    def cmd as string init "exec gzip -c > " + core.shellQuote($path) + " < " +
-        core.shellQuote($fifo);
+    def cmd as string init "exec gzip -c < " + core.shellQuote($fifo) + " > " +
+        core.shellQuote($path);
     def child as os.Process init os.spawn(["sh", "-c", $cmd]);
     errdefer reap($child);
     def f as fs.File init fs.open($fifo, "write");
@@ -373,15 +401,38 @@ export func closeSink(k as Sink) {
     }
     def code as int init 0;
     if ($k.piped) {
-        def r as os.Result init os.wait($k.proc);
-        $code = $r.exitCode;
-        os.release($k.proc);
+        try {
+            def r as os.Result init os.wait($k.proc);
+            $code = $r.exitCode;
+            os.release($k.proc);
+        } catch (e) {
+            $failure = $failure + "; " + $e.message;
+        }
     }
     discard($k.helper);
     if (len($failure) > 0) {
         core.fail("source", "closing " + $k.origin + " failed (already closed?): " + $failure);
     }
     return $code;
+}
+
+/**
+ * Refuse a path that cannot be sniffed and then reopened safely.
+ *
+ * @param path {string} file about to be sniffed
+ * @throws {Error} kind "ngs.source" when the path is missing or not a regular
+ *   file
+ */
+func requireRegular(path as string) {
+    if (not fs.exists($path)) {
+        core.fail("source", "no such file: " + $path);
+    }
+    if (not fs.isFile($path)) {
+        core.fail(
+            "source",
+            $path + " is not a regular file; use source.openStdin for standard input " +
+                "or source.openPlain for an uncompressed FIFO or device");
+    }
 }
 
 /**

@@ -23,6 +23,12 @@ RFC 1952) rather than the extension, so a gzipped `.fq` and a plain `.gz` are
 both read correctly. `source.openPlain` and `source.openGzip` force one or the
 other.
 
+Sniffing reads the file once and then reopens it, so `source.open` (and every
+format's `open`, `sam.headerOf`, `vcf.headerOf`) accepts only a regular file or
+a symlink to one. A FIFO, a device or `/dev/stdin` on a pipe raises
+`ngs.source` instead of losing its first bytes or blocking: read standard input
+with `openStdin` and any other uncompressed stream with `source.openPlain`.
+
 `source.openStdin()` reads standard input through `/dev/stdin` (Unix only):
 
 ```sh
@@ -55,6 +61,10 @@ whole `bytes`. `source.openGzip` therefore:
 
 Memory stays at one line regardless of file size, and decompression runs in C.
 `source.createGzip` does the same for output, with `gzip -c` reading the FIFO.
+It creates (truncates) the target itself first, raising `ngs.source` when that
+fails, and the child's shell opens the FIFO before the target. Opening the FIFO
+waits until the other end is open, so the old order - target first - hung for
+ever when the shell could not create the target and exited.
 
 The FIFO goes inside its own `0700` directory because creating it directly in
 the shared temp directory would mean reserving a name, deleting it and
@@ -75,8 +85,8 @@ including when the failure happens inside a caller such as `qc.analyze`.
 `source.close` closes the read handle (a still-running decompressor then exits
 on `SIGPIPE`), waits for the child, removes the FIFO directory and returns the
 child's exit code, or `0` when no child was involved. If closing the handle
-itself fails, the child and the temporary files are released first and then
-`ngs.source` is raised.
+itself fails (a second close, say), the child and the temporary files are
+released first and then `ngs.source` is raised.
 
 A truncated or corrupt `.gz` otherwise looks like an early end of stream.
 `source.closeStrict` raises `ngs.source` when the code is non-zero:

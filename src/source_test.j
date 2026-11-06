@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * White-box tests for the streaming source layer.
@@ -10,6 +10,7 @@ use testing;
 use fs;
 use os;
 use convert;
+use task;
 
 def const SAMPLE as string init "@r1\nACGTN\n+\nIIII#\n@r2\nGGCCA\n+\n))III\n";
 
@@ -254,4 +255,86 @@ func testOpenStdinIsAPlainSource() {
 func stdinSource() {
     def s as Source init openStdin();
     return close($s);
+}
+
+# Runs `name` on a task and returns the kind it threw, "none" when it returned,
+# or "timeout" when it was still blocked after 20 s. Used for calls whose
+# regression was a hang: an open on a FIFO that never gets its other end.
+func kindWithin(name as string, arg as string) {
+    def t as task of string init spawn {
+        try {
+            if ($name == "createGzip") {
+                closeSink(createGzip($arg));
+            } elseif ($name == "open") {
+                close(open($arg));
+            } else {
+                isGzip($arg);
+            }
+        } catch (e) {
+            return $e.kind;
+        }
+        return "none";
+    };
+    try {
+        return task.waitTimeout($t, 20000);
+    } catch (e) {
+        task.discard($t);
+        return $e.kind;
+    }
+}
+
+func testCreateGzipFailsFastOnAnUncreatableTarget() {
+    # A regular file as the parent directory makes the target uncreatable
+    # (ENOTDIR) for every user, root included. The old command opened the
+    # target before the FIFO, died, and left our FIFO open waiting forever.
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def blocker as string init path.join($dir, "plain");
+    fs.writeString($blocker, "x");
+    testing.assertEqual(kindWithin("createGzip", path.join($blocker, "out.gz")), "ngs.source");
+}
+
+func testOpenRefusesAFifoInsteadOfLosingBytes() {
+    # Sniffing used to read (and drop) the first two bytes of a FIFO, then
+    # reopen it; with no writer the sniff itself blocked.
+    # System temp, not .ci-fixtures: some shared mounts (vboxsf) refuse FIFOs.
+    def dir as string init fs.makeTempDir("", "ngssrc");
+    defer fs.removeAll($dir);
+    def fifo as string init path.join($dir, "pipe");
+    def made as os.Result init os.run(["mkfifo", $fifo]);
+    testing.assertEqual($made.exitCode, 0);
+    testing.assertEqual(kindWithin("open", $fifo), "ngs.source");
+    testing.assertEqual(kindWithin("isGzip", $fifo), "ngs.source");
+}
+
+func testClosingAGzipSourceTwiceRaisesNgsSource() {
+    testing.assertThrows("closeGzipTwice", "ngs.source");
+}
+
+func closeGzipTwice() {
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def p as string init path.join($dir, "reads.txt");
+    fs.writeString($p, SAMPLE);
+    def zipped as os.Result init os.run(["gzip", "-f", $p]);
+    testing.assertEqual($zipped.exitCode, 0);
+    def s as Source init open($p + ".gz");
+    while (hasNext($s)) {
+        nextLine($s);
+    }
+    closeStrict($s);
+    return close($s);
+}
+
+func testClosingAGzipSinkTwiceRaisesNgsSource() {
+    testing.assertThrows("closeGzipSinkTwice", "ngs.source");
+}
+
+func closeGzipSinkTwice() {
+    def dir as string init fixtureDir();
+    defer fs.removeAll($dir);
+    def k as Sink init createGzip(path.join($dir, "out.txt.gz"));
+    writeLine($k, "one");
+    closeSink($k);
+    return closeSink($k);
 }

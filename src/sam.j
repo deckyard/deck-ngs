@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 
 /**
  * Streaming SAM reading and writing.
@@ -61,6 +61,9 @@ export def const FLAG_DUPLICATE as int init 0x400;
 
 /** FLAG 0x800: supplementary alignment. */
 export def const FLAG_SUPPLEMENTARY as int init 0x800;
+
+# Largest int64, the bound `cigarSpan` checks its running total against.
+def const INT_MAX as int init 9223372036854775807;
 
 /** Placeholder for an absent string column. */
 export def const MISSING as string init "*";
@@ -260,6 +263,8 @@ func parseRow(line as string) {
  *
  * @param rec {Record} the alignment
  * @return {string} one tab-delimited record, no trailing newline
+ * @throws {Error} kind "ngs.sam" when a field or tag contains a tab, CR or LF,
+ *   which would shift or split the record
  */
 export func format(rec as Record) {
     def columns as list of string init [
@@ -278,7 +283,13 @@ export func format(rec as Record) {
     for (def tag in $rec.tags) {
         $columns[] = $tag;
     }
-    return strings.join($columns, core.TAB);
+    def line as string init strings.join($columns, core.TAB);
+    # Three native scans of the joined line instead of three per column.
+    if (strings.count($line, core.TAB) != len($columns) - 1 or strings.indexOf($line, "\n") >= 0 or
+        strings.indexOf($line, "\r") >= 0) {
+        core.fail("sam", "a field contains a tab or line break in record: " + $rec.qname);
+    }
+    return $line;
 }
 
 /**
@@ -412,16 +423,12 @@ export func parseCigar(cigar as string) {
  *
  * @param cigar {string} raw CIGAR
  * @return {int} reference span in bases, 0 for "*"
- * @throws {Error} as `parseCigar`
+ * @throws {Error} kind "ngs.sam" on an operation without a length, a trailing
+ *   length without an operation, a length over 18 digits, or a total past the
+ *   int range
  */
 export func referenceLength(cigar as string) {
-    def total as int init 0;
-    for (def step in parseCigar($cigar)) {
-        if (consumesReference($step.op)) {
-            $total = $total + $step.length;
-        }
-    }
-    return $total;
+    return cigarSpan($cigar, true);
 }
 
 /**
@@ -431,22 +438,76 @@ export func referenceLength(cigar as string) {
  *
  * @param cigar {string} raw CIGAR
  * @return {int} query span in bases, 0 for "*"
- * @throws {Error} as `parseCigar`
+ * @throws {Error} as `referenceLength`
  */
 export func queryLength(cigar as string) {
+    return cigarSpan($cigar, false);
+}
+
+/**
+ * Sum the lengths of the CIGAR operations that consume the reference (or the
+ * query), in one pass over the bytes.
+ *
+ * Builds no `CigarOp` list: the lengths are accumulated in place. Building and
+ * walking the struct list was most of `toInterval`'s cost. Every non-digit
+ * byte is taken as an operation, as `parseCigar` does with characters.
+ *
+ * @param cigar {string} raw CIGAR, "*" for none
+ * @param reference {bool} true to count M, D, N, = and X; false for M, I, S, = and X
+ * @return {int} the summed length, 0 for "*" or ""
+ * @throws {Error} as `referenceLength`
+ */
+func cigarSpan(cigar as string, reference as bool) {
+    if ($cigar == MISSING or len($cigar) == 0) {
+        return 0;
+    }
+    def raw as bytes init convert.bytesFromString($cigar, "utf-8");
     def total as int init 0;
-    for (def step in parseCigar($cigar)) {
-        if (consumesQuery($step.op)) {
-            $total = $total + $step.length;
+    def n as int init 0;
+    def digits as int init 0;
+    for (def i in 0..len($raw)) {
+        def c as int init $raw[$i];
+        if ($c >= 48 and $c <= 57) {
+            # 18 digits always fit an int64; checked before the multiply.
+            if ($digits == 18) {
+                core.fail("sam", "CIGAR length over 18 digits: " + $cigar);
+            }
+            $n = $n * 10 + ($c - 48);
+            $digits = $digits + 1;
+            continue;
         }
+        if ($digits == 0) {
+            core.fail("sam", "CIGAR operation without a length: " + $cigar);
+        }
+        # M=77 X=88 and '='=61 consume both; D=68 N=78 only the reference;
+        # I=73 S=83 only the query.
+        def counts as bool init $c == 77 or $c == 61 or $c == 88;
+        if ($reference) {
+            $counts = $counts or $c == 68 or $c == 78;
+        } else {
+            $counts = $counts or $c == 73 or $c == 83;
+        }
+        if ($counts) {
+            if ($total > INT_MAX - $n) {
+                core.fail("sam", "CIGAR span exceeds the int range: " + $cigar);
+            }
+            $total = $total + $n;
+        }
+        $n = 0;
+        $digits = 0;
+    }
+    if ($digits > 0) {
+        core.fail("sam", "CIGAR ends with a length and no operation: " + $cigar);
     }
     return $total;
 }
 
 /**
  * The reference range an alignment covers, as a 0-based half-open interval:
- * `pos - 1` to that plus `referenceLength(cigar)`. When the CIGAR spans no
- * reference bases ("*"), the length of `seq` is used instead.
+ * `pos - 1` to that plus `referenceLength(cigar)`. When the CIGAR is "*" or
+ * consumes no reference bases (all soft clips or insertions, say), the
+ * interval spans the one base at `pos`, as htslib's `bam_endpos` does; the
+ * read's length says nothing about its reference span.
  *
  * @param rec {Record} a mapped alignment
  * @return {Interval} the range, named after the read, MAPQ as score, strand
@@ -460,7 +521,7 @@ export func toInterval(rec as Record) {
     }
     def span as int init referenceLength($rec.cigar);
     if ($span == 0) {
-        $span = len($rec.seq);
+        $span = 1;
     }
     def start as int init $rec.pos - 1;
     def score as float init convert.toFloat($rec.mapq);
@@ -556,26 +617,6 @@ func headerTag(line as string, prefix as string) {
         }
     }
     return "";
-}
-
-/**
- * Whether a CIGAR operation advances the reference position.
- *
- * @param op {string} operation code
- * @return {bool} true for M, D, N, = and X
- */
-func consumesReference(op as string) {
-    return $op == "M" or $op == "D" or $op == "N" or $op == "=" or $op == "X";
-}
-
-/**
- * Whether a CIGAR operation consumes query bases.
- *
- * @param op {string} operation code
- * @return {bool} true for M, I, S, = and X
- */
-func consumesQuery(op as string) {
-    return $op == "M" or $op == "I" or $op == "S" or $op == "=" or $op == "X";
 }
 
 /**

@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 /**
  * White-box tests for the VCF reader.
  * Run with: jennifer test vcf_test.j
  */
 use testing;
 use fs;
+use os;
+use task;
+use path;
 
 func temp(body as string, suffix as string) {
     def p as string init fs.makeTempFile("", "ngsvcf", $suffix);
@@ -131,4 +134,91 @@ func testOpenStdinLeavesTheHeaderEmpty() {
     testing.assertEqual(len($r.meta), 0);
     testing.assertEqual(len($r.samples), 0);
     testing.assertEqual(close($r), 0);
+}
+
+func testInfoValuesArePercentEncodedAndDecoded() {
+    # VCF 4.3: a ';' inside a value used to end the entry, so "a;B=2" came back
+    # as NOTE=a plus a new key B.
+    def v as Variant init parse("chr1\t5\t.\tA\tG\t.\tPASS\tX=1");
+    $v.info["NOTE"] = "a;B=2:50%\tx";
+    def text as string init format($v);
+    testing.assertEqual($text, "chr1\t5\t.\tA\tG\t.\tPASS\tX=1;NOTE=a%3BB%3D2%3A50%25%09x");
+    def back as Variant init parse($text);
+    testing.assertEqual($back.info, {"X": "1", "NOTE": "a;B=2:50%\tx"});
+    # ',' separates values and is neither encoded nor split.
+    testing.assertEqual(formatInfo({"AF": "0.1,0.2"}), "AF=0.1,0.2");
+    # %2C decodes; a '%' that is not one of the escapes is kept (pre-4.3 files);
+    # "%253A" is an encoded "%3A", not a ':'.
+    testing.assertEqual(parseInfo("A=x%2cy;B=50%;C=%253A"), {"A": "x,y", "B": "50%", "C": "%3A"});
+}
+
+func testDuplicateInfoKeysRaise() {
+    testing.assertThrowsWith("infoOf", ["DP=1;DP=2"], "ngs.vcf");
+    testing.assertThrowsWith("infoOf", ["DB;DB"], "ngs.vcf");
+}
+
+func infoOf(text as string) {
+    return parseInfo($text);
+}
+
+func testInfoKeysThatBreakTheColumnAreRejected() {
+    testing.assertThrowsWith("infoText", ["A;B"], "ngs.vcf");
+    testing.assertThrowsWith("infoText", ["A=B"], "ngs.vcf");
+    testing.assertThrowsWith("infoText", [""], "ngs.vcf");
+    testing.assertThrowsWith("infoText", ["A B"], "ngs.vcf");
+}
+
+func infoText(key as string) {
+    def m as map of string to string init {};
+    $m[$key] = "1";
+    return formatInfo($m);
+}
+
+func testEmptyFormatAndFilterKeepColumnsInPlace() {
+    # FORMAT "." with a sample: the empty FORMAT used to be dropped, so the
+    # sample was written into the FORMAT column. An empty FILTER left an empty
+    # column, which is not valid VCF.
+    def line as string init "chr1\t5\t.\tA\tG\t.\t.\t.\t.\t0/1";
+    def v as Variant init parse($line);
+    testing.assertEqual(len($v.format), 0);
+    testing.assertEqual(format($v), $line);
+    def back as Variant init parse(format($v));
+    testing.assertEqual($back.samples, ["0/1"]);
+    $v.filter = "";
+    testing.assertEqual(format($v), $line);
+}
+
+func columnWith(chrom as string, sample as string) {
+    def v as Variant init parse("chr1\t5\t.\tA\tG\t.\tPASS\t.\tGT\t0/1");
+    $v.chrom = $chrom;
+    $v.samples = [$sample];
+    return format($v);
+}
+
+func testFormatRejectsTabsAndLineBreaks() {
+    testing.assertThrowsWith("columnWith", ["chr\t1", "0/1"], "ngs.vcf");
+    testing.assertThrowsWith("columnWith", ["chr1", "0/1\nchr2"], "ngs.vcf");
+}
+
+func testOpenRefusesAFifoInsteadOfBlocking() {
+    # System temp, not .ci-fixtures: some shared mounts (vboxsf) refuse FIFOs.
+    def dir as string init fs.makeTempDir("", "ngsvcf");
+    defer fs.removeAll($dir);
+    def fifo as string init path.join($dir, "pipe");
+    testing.assertEqual(os.run(["mkfifo", $fifo]).exitCode, 0);
+    def t as task of string init spawn {
+        try {
+            close(open($fifo));
+        } catch (e) {
+            return $e.kind;
+        }
+        return "none";
+    };
+    def kind as string init "timeout";
+    try {
+        $kind = task.waitTimeout($t, 20000);
+    } catch (e) {
+        task.discard($t);
+    }
+    testing.assertEqual($kind, "ngs.source");
 }

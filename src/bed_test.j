@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.25.0
+# pragma-jennifer-version: >=0.26.0
 /**
  * White-box tests for the BED reader.
  * Run with: jennifer test bed_test.j
@@ -89,4 +89,31 @@ func testOpenStdinWrapsTheStdinSource() {
     }
     testing.assertEqual($r.src.origin, "<stdin>");
     testing.assertEqual(close($r), 0);
+}
+
+func formatScoreOf(score as float) {
+    return format(intervals.named("chr1", 1, 2, "n", $score, "+"));
+}
+
+func testHugeScoresFormatWithoutOverflow() {
+    # convert.toInt raised a bare runtime error past 2^63; these stay floats.
+    testing.assertEqual(formatScoreOf(1e20), "chr1\t1\t2\tn\t" + convert.toString(1e20) + "\t+");
+    testing.assertEqual(
+        formatScoreOf(-1e300),
+        "chr1\t1\t2\tn\t" + convert.toString(-1e300) + "\t+");
+    # Whole numbers below the limit still drop the decimal part.
+    testing.assertEqual(formatScoreOf(999.0), "chr1\t1\t2\tn\t999\t+");
+    def back as intervals.Interval init parse(formatScoreOf(1e20));
+    testing.assertEqual($back.score, 1e20);
+}
+
+func formatNamed(chrom as string, name as string) {
+    return format(intervals.named($chrom, 1, 2, $name, 0.0, "+"));
+}
+
+func testFormatRejectsTabsAndLineBreaks() {
+    # "a\tb" used to be written as two columns, shifting score and strand.
+    testing.assertThrowsWith("formatNamed", ["chr1", "a\tb"], "ngs.bed");
+    testing.assertThrowsWith("formatNamed", ["chr1", "a\nchr2\t5\t6"], "ngs.bed");
+    testing.assertThrowsWith("formatNamed", ["chr1\r", "a"], "ngs.bed");
 }
