@@ -461,7 +461,7 @@ func cigarSpan(cigar as string, reference as bool) {
     if ($cigar == MISSING or len($cigar) == 0) {
         return 0;
     }
-    def raw as bytes init convert.bytesFromString($cigar, "utf-8");
+    def raw as bytes init convert.bytesFromString("utf-8", $cigar);
     def total as int init 0;
     def n as int init 0;
     def digits as int init 0;

@@ -581,7 +581,7 @@ func percentDecode(s as string) {
         return $s;
     }
     try {
-        return convert.stringFromBytes(encoding.fromText($s, "uri-percent"), "utf-8");
+        return convert.stringFromBytes("utf-8", encoding.fromText("uri-percent", $s));
     } catch (e) {
         return $s;
     }

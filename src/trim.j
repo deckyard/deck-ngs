@@ -372,7 +372,7 @@ export func qualityKeepLength(qual as string, threshold as int, window as int, o
                 " outside " + convert.toString($offset) + "..126 for offset " +
                 convert.toString($offset) + "; wrong offset?");
     }
-    def raw as bytes init convert.bytesFromString($qual, "utf-8");
+    def raw as bytes init convert.bytesFromString("utf-8", $qual);
     def n as int init len($raw);
     if ($n == 0) {
         return 0;

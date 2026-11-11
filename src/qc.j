@@ -207,7 +207,7 @@ export func analyze(path as string, opts as Options) {
             $lengthHist[$width] = 1;
         }
         if ($cfg.perBase) {
-            def raw as bytes init convert.bytesFromString($rec.qual, "utf-8");
+            def raw as bytes init convert.bytesFromString("utf-8", $rec.qual);
             while (len($sums) < len($raw)) {
                 $sums[] = 0;
                 $counts[] = 0;

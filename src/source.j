@@ -202,7 +202,7 @@ export func openGzipBuffered(path as string) {
         core.fail("source", "no such file: " + $path);
     }
     def packed as bytes init fs.readBytes($path);
-    def raw as bytes init compress.unpack($packed, "gzip");
+    def raw as bytes init compress.unpack("gzip", $packed);
     def temp as string init fs.makeTempFile("", "ngsbuf", ".txt");
     errdefer discard($temp);
     fs.writeBytes($temp, $raw);
