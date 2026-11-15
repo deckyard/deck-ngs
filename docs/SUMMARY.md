@@ -24,6 +24,7 @@
 - [Performance](performance.md)
 - [Recipes](recipes.md)
 - [Cheatsheet](cheatsheet.md)
+- [Design](design.md)
 
 # Development
 
