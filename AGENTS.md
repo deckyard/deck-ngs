@@ -71,7 +71,7 @@ tools/check-headers.sh                 # SPDX pair + range match the manifest
 tools/check-overlays.sh                # every module has a _test.j, and back
 tools/check-src.sh                     # src/ holds only .j files
 tools/check-coverage.sh                # every export is called from a test
-tools/check-docs.sh                    # docs, signatures and docblocks match the code
+tools/check-docs.sh                    # docs match the code, code blocks parse
 tools/check-identity.sh                # no template placeholder left
 tools/check-examples.sh                # every example still works
 ```
@@ -103,6 +103,13 @@ tools/check-examples.sh                # every example still works
 - **Calls in the docs are checked.** Snippets import the deck under its own
   name (`import "@scope/<slug>/" as <slug>;`), and every `<slug>.name(...)`
   they show must exist and take that many arguments.
+- **Every `` ```jennifer `` block in the docs parses.** `tools/check-docs.sh`
+  parses each one without running it, so a fragment may use names it does not
+  define, and `...` may stand for code left out, but a syntax error (a lost
+  `$`, `else if` for `elseif`, a `{` interpolating in a `"..."` string) fails
+  the gate at the block's opening fence. Fence output and shell sessions as
+  `text` or `sh`. A block that must not parse gets a `<!-- no-check -->` line
+  directly before its fence, with no blank line between.
 - **Known gaps are a backlog, not a licence.** `docs/.cheatsheet-todo` and
   `tools/.coverage-todo` list what an older deck has not documented or tested
   yet. Remove a line when you fix it; never add one to make a check pass.

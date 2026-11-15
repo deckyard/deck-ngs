@@ -231,7 +231,7 @@ deck_image() {
 }
 
 # The interpreter source ref matching deck_image, for a job that builds the
-# interpreter rather than pulling it - jennifer-tiny has no published image.
+# interpreter rather than pulling it (.github/actions/install-jennifer).
 # Same rule: `dev` builds main, a released series builds its newest patch tag,
 # and an image pinned to an exact version builds that version.
 JENNIFER_REPO="https://github.com/jennifer-language/jennifer"
