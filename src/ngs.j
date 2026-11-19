@@ -40,13 +40,6 @@ use meta;
 use strings;
 import "./core.j" as core;
 
-/**
- * Deck version, kept by hand: `tools/inject-version.sh` stamps only a topics
- * deck's `src/topics/version.j`. `tools/check-extra.sh` fails when it differs
- * from the manifest's `package.version`.
- */
-export def const VERSION as string init "0.3.0";
-
 /** Package name. */
 export def const NAME as string init "@deckyard/ngs";
 
@@ -84,7 +77,7 @@ export func capabilities() {
 
 /**
  * A one-line description of the deck and what this host supports, e.g.
- * `@deckyard/ngs 0.3.0 (streaming gzip, external tools)`.
+ * `@deckyard/ngs (streaming gzip, external tools)`.
  *
  * @return {string} the status line, no trailing newline
  */
@@ -101,7 +94,7 @@ export func describe() {
     } else {
         $notes[] = "no external tools";
     }
-    return NAME + " " + VERSION + " (" + strings.join($notes, ", ") + ")";
+    return NAME + " (" + strings.join($notes, ", ") + ")";
 }
 
 /**

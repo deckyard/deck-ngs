@@ -34,7 +34,7 @@ replace. So the deck deliberately stays out of:
 
 - **A modules deck.** Consumers import the submodule they need
   (`import "@deckyard/ngs/qc.j" as qc;`). The entry module carries only
-  identity (`VERSION`, `NAME`) and the host probe (`capabilities`,
+  identity (`NAME`) and the host probe (`capabilities`,
   `describe`, `requireFullHost`). Every module imports `core`; the readers
   import `source`; the format modules import `intervals`.
 - **Pure Jennifer, with gzip through a subprocess.** The parsers are
@@ -158,8 +158,6 @@ datasets.
   decompressed twice; `sam.openStdin` leaves the header empty.
 - `capabilities` reports `streamingGzip` from the capability alone; a caller
   must also check `gzipOnPath`.
-- `ngs.VERSION` is kept by hand and must be bumped with the manifest;
-  `tools/check-extra.sh` fails while the two differ.
 - `jennifer-tiny` is not a supported engine: it lacks `exec` and the
   capability probe the gzip and pipeline layers need.
 

@@ -585,7 +585,6 @@ The entry module. Errors are `ngs.ngs`.
 
 | constant | value | notes |
 | --- | --- | --- |
-| `ngs.VERSION` | `"0.3.0"` | the deck's version |
 | `ngs.NAME` | `"@deckyard/ngs"` | the package name |
 
 ### `ngs.Capabilities`
@@ -599,5 +598,5 @@ The entry module. Errors are `ngs.ngs`.
 | function | returns | notes |
 | --- | --- | --- |
 | `ngs.capabilities()` | `Capabilities` | what this interpreter and host support |
-| `ngs.describe()` | `string` | name, version and capabilities on one line |
+| `ngs.describe()` | `string` | name and capabilities on one line |
 | `ngs.requireFullHost()` | - | raises without the `exec` capability |

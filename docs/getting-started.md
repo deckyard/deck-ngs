@@ -62,7 +62,7 @@ import "@deckyard/ngs/" as ngs;
 
 def caps as ngs.Capabilities init ngs.capabilities();
 io.printf("%s\n", ngs.describe());
-# @deckyard/ngs 0.3.0 (streaming gzip, external tools)
+# @deckyard/ngs (streaming gzip, external tools)
 
 if (not $caps.streamingGzip) {
     io.eprintf("no exec capability: gzip input will have to be buffered\n");

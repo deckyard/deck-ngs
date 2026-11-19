@@ -10,7 +10,6 @@ use strings;
 
 func testIdentityMatchesTheManifest() {
     testing.assertEqual(NAME, "@deckyard/ngs");
-    testing.assertEqual(VERSION, "0.3.0");
 }
 
 func testCapabilitiesAreConsistent() {
@@ -23,10 +22,9 @@ func testCapabilitiesAreConsistent() {
     }
 }
 
-func testDescribeNamesTheDeckAndVersion() {
+func testDescribeNamesTheDeck() {
     def text as string init describe();
-    testing.assertEqual(strings.contains($text, NAME), true);
-    testing.assertEqual(strings.contains($text, VERSION), true);
+    testing.assertEqual(strings.startsWith($text, NAME + " ("), true);
 }
 
 func testRequireFullHostMatchesCapabilities() {
