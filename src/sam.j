@@ -62,6 +62,9 @@ export def const FLAG_DUPLICATE as int init 0x400;
 /** FLAG 0x800: supplementary alignment. */
 export def const FLAG_SUPPLEMENTARY as int init 0x800;
 
+# The CIGAR operation codes the SAM specification defines.
+def const CIGAR_OPS as string init "MIDNSHP=X";
+
 # Largest int64, the bound `cigarSpan` checks its running total against.
 def const INT_MAX as int init 9223372036854775807;
 
@@ -386,12 +389,13 @@ export func strandOf(rec as Record) {
 /**
  * Split a CIGAR string into its operations.
  *
- * Operation codes are not validated; any non-digit character is taken as one.
+ * Each operation is a decimal length followed by one of `M I D N S H P = X`
+ * (upper case).
  *
  * @param cigar {string} raw CIGAR, "*" for none
  * @return {list of CigarOp} operations in order, empty for "*" or ""
- * @throws {Error} kind "ngs.sam" on an operation without a length or a trailing
- *   length without an operation
+ * @throws {Error} kind "ngs.sam" on an operation code outside `M I D N S H P = X`,
+ *   an operation without a length or a trailing length without an operation
  */
 export func parseCigar(cigar as string) {
     def out as list of CigarOp init [];
@@ -406,6 +410,9 @@ export func parseCigar(cigar as string) {
         }
         if (len($digits) == 0) {
             core.fail("sam", "CIGAR operation without a length: " + $cigar);
+        }
+        if (not strings.contains(CIGAR_OPS, $ch)) {
+            core.fail("sam", "CIGAR operation not one of M I D N S H P = X: " + $cigar);
         }
         $out[] = CigarOp{length: core.parseInt("sam", "CIGAR length", $digits), op: $ch};
         $digits = "";
@@ -423,9 +430,10 @@ export func parseCigar(cigar as string) {
  *
  * @param cigar {string} raw CIGAR
  * @return {int} reference span in bases, 0 for "*"
- * @throws {Error} kind "ngs.sam" on an operation without a length, a trailing
- *   length without an operation, a length over 18 digits, or a total past the
- *   int range
+ * @throws {Error} kind "ngs.sam" on an operation code outside
+ *   `M I D N S H P = X`, an operation without a length, a trailing length
+ *   without an operation, a length over 18 digits, or a total past the int
+ *   range
  */
 export func referenceLength(cigar as string) {
     return cigarSpan($cigar, true);
@@ -449,8 +457,8 @@ export func queryLength(cigar as string) {
  * query), in one pass over the bytes.
  *
  * Builds no `CigarOp` list: the lengths are accumulated in place. Building and
- * walking the struct list was most of `toInterval`'s cost. Every non-digit
- * byte is taken as an operation, as `parseCigar` does with characters.
+ * walking the struct list was most of `toInterval`'s cost. A non-digit byte
+ * outside `M I D N S H P = X` raises, as in `parseCigar`.
  *
  * @param cigar {string} raw CIGAR, "*" for none
  * @param reference {bool} true to count M, D, N, = and X; false for M, I, S, = and X
@@ -480,7 +488,11 @@ func cigarSpan(cigar as string, reference as bool) {
             core.fail("sam", "CIGAR operation without a length: " + $cigar);
         }
         # M=77 X=88 and '='=61 consume both; D=68 N=78 only the reference;
-        # I=73 S=83 only the query.
+        # I=73 S=83 only the query; H=72 P=80 neither.
+        if (not ($c == 77 or $c == 61 or $c == 88 or $c == 68 or $c == 78 or $c == 73 or $c == 83 or
+            $c == 72 or $c == 80)) {
+            core.fail("sam", "CIGAR operation not one of M I D N S H P = X: " + $cigar);
+        }
         def counts as bool init $c == 77 or $c == 61 or $c == 88;
         if ($reference) {
             $counts = $counts or $c == 68 or $c == 78;

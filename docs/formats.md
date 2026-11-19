@@ -193,7 +193,9 @@ The flag constants, `sam.FLAG_PAIRED` (`0x1`) to `sam.FLAG_SUPPLEMENTARY`
 least eleven columns; columns after the eleventh are kept verbatim in `tags`.
 
 `sam.parseCigar` splits a CIGAR into `sam.CigarOp` values and raises `ngs.sam`
-on a malformed string. The two span functions:
+on a malformed string: an operation code outside `M I D N S H P = X` (lower
+case included), an operation without a length, or a length without an
+operation. The two span functions raise on the same strings:
 
 ```jennifer
 sam.referenceLength("10M5D10M");   # 25 - counts M D N = X

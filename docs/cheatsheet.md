@@ -303,7 +303,7 @@ SAM alignments ([Formats](formats.md#sam)). Errors are `ngs.sam`.
 | `sam.isDuplicate(rec)` | `bool` | FLAG `0x400` |
 | `sam.isPrimary(rec)` | `bool` | none of `0x4`, `0x100`, `0x800` |
 | `sam.strandOf(rec)` | `string` | `+`, `-`, or `.` when unmapped |
-| `sam.parseCigar(cigar)` | `list of CigarOp` | empty for `*`; raises on a malformed CIGAR |
+| `sam.parseCigar(cigar)` | `list of CigarOp` | empty for `*`; raises on a malformed CIGAR or an op outside `M I D N S H P = X` |
 | `sam.referenceLength(cigar)` | `int` | sum of `M D N = X`; raises on a malformed CIGAR or int overflow |
 | `sam.queryLength(cigar)` | `int` | sum of `M I S = X`; raises as `referenceLength` |
 | `sam.toInterval(rec)` | `intervals.Interval` | `pos - 1`, end from CIGAR (one base when it is `*` or spans no reference); named by `qname`, scored by MAPQ; raises when unmapped |
@@ -585,7 +585,7 @@ The entry module. Errors are `ngs.ngs`.
 
 | constant | value | notes |
 | --- | --- | --- |
-| `ngs.VERSION` | `"0.3.0-dev"` | the deck's version |
+| `ngs.VERSION` | `"0.3.0"` | the deck's version |
 | `ngs.NAME` | `"@deckyard/ngs"` | the package name |
 
 ### `ngs.Capabilities`

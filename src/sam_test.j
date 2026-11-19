@@ -172,6 +172,26 @@ func testMalformedCigarSpansRaiseNgsSam() {
     testing.assertThrowsWith("refLength", [strings.repeat("999999999999999999M", 10)], "ngs.sam");
 }
 
+func testUnknownCigarOpsRaiseNgsSam() {
+    # Unknown and lower-case codes were taken as operations, and the span
+    # functions skipped them: "40m" had a reference length of 0.
+    for (def bad in ["40M2Q", "40m", "10M2i", "5M1\u00e9"]) {
+        testing.assertThrowsWith("refLength", [$bad], "ngs.sam");
+        testing.assertThrowsWith("qryLength", [$bad], "ngs.sam");
+        testing.assertThrowsWith("parseCigar", [$bad], "ngs.sam");
+    }
+    testing.assertThrowsWith("intervalOf", ["40m"], "ngs.sam");
+    testing.assertEqual(len(parseCigar("1M1I1D1N1S1H1P1=1X")), 9);
+}
+
+func qryLength(cigar as string) {
+    return queryLength($cigar);
+}
+
+func intervalOf(cigar as string) {
+    return toInterval(samLine($cigar, "*"));
+}
+
 func refLength(cigar as string) {
     return referenceLength($cigar);
 }
