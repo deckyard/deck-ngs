@@ -5,7 +5,7 @@
 ```yaml
 # deck.yaml
 decks:
-  "@deckyard/ngs": "^0.2.0"
+  "@deckyard/ngs": "^0.3.0"
 ```
 
 The `@` in `@deckyard/ngs` is replaced by the vendor root, so the deck lands in
@@ -18,8 +18,8 @@ top-level directory. To vendor it by hand, strip both levels:
 
 ```sh
 mkdir -p vendor/deckyard/ngs
-tar -xzf deckyard-ngs-0.2.0.tar.gz -C vendor/deckyard/ngs \
-    --strip-components=2 deckyard-ngs-0.2.0/src
+tar -xzf deckyard-ngs-0.3.0.tar.gz -C vendor/deckyard/ngs \
+    --strip-components=2 deckyard-ngs-0.3.0/src
 ```
 
 The vendor root is resolved as `--vendor`, then `JENNIFER_VENDOR`, then the
@@ -62,7 +62,7 @@ import "@deckyard/ngs/" as ngs;
 
 def caps as ngs.Capabilities init ngs.capabilities();
 io.printf("%s\n", ngs.describe());
-# @deckyard/ngs 0.3.0-dev (streaming gzip, external tools)
+# @deckyard/ngs 0.3.0 (streaming gzip, external tools)
 
 if (not $caps.streamingGzip) {
     io.eprintf("no exec capability: gzip input will have to be buffered\n");

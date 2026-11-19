@@ -15,7 +15,7 @@ which the `pipeline` module drives.
 ```yaml
 # deck.yaml
 decks:
-  "@deckyard/ngs": "^0.2.0"
+  "@deckyard/ngs": "^0.3.0"
 ```
 
 `jvc` vendors the deck's `src/` into `vendor/deckyard/ngs/`. Release archives

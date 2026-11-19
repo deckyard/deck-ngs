@@ -10,7 +10,7 @@ use strings;
 
 func testIdentityMatchesTheManifest() {
     testing.assertEqual(NAME, "@deckyard/ngs");
-    testing.assertEqual(VERSION, "0.3.0-dev");
+    testing.assertEqual(VERSION, "0.3.0");
 }
 
 func testCapabilitiesAreConsistent() {
