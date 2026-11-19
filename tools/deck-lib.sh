@@ -200,7 +200,7 @@ deck_load() {
 # the only thing that will load it at all.
 #
 # Bump this when a new interpreter is released.
-JENNIFER_NEWEST_RELEASE="0.25"
+JENNIFER_NEWEST_RELEASE="0.26"
 
 deck_image() {
     # An explicit override always wins - useful for bisecting.

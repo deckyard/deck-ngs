@@ -120,8 +120,10 @@ tools/check-examples.sh                # every example still works
 ## Jennifer habits that save time
 
 - `X_test.j` is a **white-box overlay** of `X.j`: it sees the internals, calls
-  them unqualified, and inherits the module's imports. Re-importing one of them
-  is an alias collision.
+  them unqualified, and inherits the module's imports, so it needs none of
+  them again (repeating one is allowed). It must not define a function under a
+  name the module already uses: that is `function "x" is defined more than
+  once`, so give test helpers names of their own.
 - `lint` fails on a *warning*, not on *info*. A `# lint-disable: ID` directive
   only works as a trailing comment on the offending line.
 - `jennifer fmt` re-joins hand-wrapped lines. Shorten a long line instead of

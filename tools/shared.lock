@@ -1,12 +1,12 @@
 # tools/shared.lock - written by the template's tools/sync-deck.sh. Do not
 # edit: tools/check-shared.sh fails CI when a file below differs from it.
-# source: template c81632c, synced 2026-11-15
+# source: template c81632c-dirty, synced 2026-11-17
 64d49fb2087dc76fadc8b4282dc45d55354a84a57914725c258a036ccf66f607  .github/workflows/test.yml
 0c9c1a9fea4b6cb46c4373ddebd857df1528189b0e09324c7309bf2164324097  .github/workflows/release.yml
-286238a918176a80223c5c871be5e487f32516fdcba6c6aaaba66c3cf5e1f685  .github/workflows/docs.yml
+11d9adf335e2cb9ce3883bc360ffe54a7369be857dfa09e49d6689e6a410ada4  .github/workflows/docs.yml
 16e13efa3be95e32734895b93d9d390d3237cf52e5f63ced7e4ecc3ef285da7b  .github/actions/setup-jennifer/action.yml
 d749f6dcd08caa5f5e6fe1b5f168564f8b06e031b9c80d86e31fba23dc2a733e  .github/actions/install-jennifer/action.yml
-b178175e051ab379c3fd2104ce75dde193d3d68300c70db043141b31c188430b  tools/deck-lib.sh
+27d92169b602e080a9c3ca6b1268d3baff49eeb93f0e40037a34824a8f8112d3  tools/deck-lib.sh
 e387bd280c2195a382778ae468d24f17211881b67862eac33e6ac76a5b502cfb  tools/shared-files
 22537456f874d287fa7bb212a8fb8fd782c1e27a7e3c3a99853054cc6d9f34be  tools/check-shared.sh
 c78bbab732a504f05f195e36deea4f8db05113f8ae1b0b4b717d184e02896f65  tools/check-all.sh
@@ -22,4 +22,4 @@ c9bb0529741f63ba6b4b26445dd79453bd53816ca4b3d24e1fe89724716cced9  tools/check-do
 0eda843a636a7c3b7c9d14a8bd969950bde8f6133975ffa3ce762d62b1d334e7  tools/version.sh
 5ca4b2343c4d4d97b12bc64be88c4afce247bc444f9168409552066f91bf900c  tools/inject-version.sh
 5c236a3181973514d90488642fbd8c337df30a0d65008d11119769d5119381bf  tools/pack.sh
-a77383303aa26ecbba6e2407c1052eab9ec53357afa074cb7dbb81eda40f1343  AGENTS.md
+38d3cf918acc499188ace07183077c944b8407fceef6220c803f525d15b535da  AGENTS.md
