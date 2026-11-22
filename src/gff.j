@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * Streaming GFF3 and GTF reading and writing.
@@ -239,8 +239,8 @@ export func parseAttributes(text as string) {
             }
             continue;
         }
-        def key as string init strings.substring($trimmed, 0, $cut);
-        def value as string init percentDecode(strings.substring($trimmed, $cut + 1));
+        def key as string init $trimmed[..$cut];
+        def value as string init percentDecode($trimmed[$cut + 1..]);
         # Written in place, not through a helper: passing the map would copy it.
         if (maps.has($out, $key)) {
             $out[$key] = $out[$key] + "," + $value;
@@ -543,8 +543,8 @@ func parseGtfAttributes(text as string) {
             }
             continue;
         }
-        def key as string init strings.substring($trimmed, 0, $cut);
-        def value as string init unquote(strings.trim(strings.substring($trimmed, $cut + 1)));
+        def key as string init $trimmed[..$cut];
+        def value as string init unquote(strings.trim($trimmed[$cut + 1..]));
         if (maps.has($out, $key)) {
             $out[$key] = $out[$key] + "," + $value;
         } else {
@@ -565,7 +565,7 @@ func parseGtfAttributes(text as string) {
  */
 func unquote(s as string) {
     if (len($s) >= 2 and strings.startsWith($s, "\"") and strings.endsWith($s, "\"")) {
-        return strings.substring($s, 1, len($s) - 1);
+        return $s[1..len($s) - 1];
     }
     return $s;
 }
@@ -581,7 +581,7 @@ func percentDecode(s as string) {
         return $s;
     }
     try {
-        return convert.stringFromBytes("utf-8", encoding.fromText("uri-percent", $s));
+        return encoding.decode("utf-8", encoding.fromText("uri-percent", $s));
     } catch (e) {
         return $s;
     }

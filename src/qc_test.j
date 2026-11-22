@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * White-box tests for the QC module.
@@ -116,7 +116,7 @@ func testPerBaseHandlesRaggedLengths() {
 
 func testDetectsAdapters() {
     def seq as string init "ACGT" + ADAPTER_TRUSEQ + "TT";
-    def qual as string init strings.repeat("I", len($seq));
+    def qual as string init strings.replicate("I", len($seq));
     def p as string init writeTemp(fq("a", $seq, $qual), ".fastq");
     def rep as Report init analyze($p, options());
     fs.remove($p);
@@ -125,10 +125,10 @@ func testDetectsAdapters() {
 }
 
 func testAdapterNotMatchedAcrossRecords() {
-    def head as string init strings.substring(ADAPTER_TRUSEQ, 0, 6);
-    def tail as string init strings.substring(ADAPTER_TRUSEQ, 6);
-    def body as string init fq("a", $head, strings.repeat("I", len($head))) +
-        fq("b", $tail, strings.repeat("I", len($tail)));
+    def head as string init ADAPTER_TRUSEQ[..6];
+    def tail as string init ADAPTER_TRUSEQ[6..];
+    def body as string init fq("a", $head, strings.replicate("I", len($head))) +
+        fq("b", $tail, strings.replicate("I", len($tail)));
     def p as string init writeTemp($body, ".fastq");
     def rep as Report init analyze($p, options());
     fs.remove($p);
@@ -240,7 +240,7 @@ func testFailedAnalyzeLeavesNoTemporaries() {
 func testDuplicateAdapterIsCountedOnce() {
     # One read holding the TruSeq prefix once.
     def seq as string init "ACGTACGT" + ADAPTER_TRUSEQ + "TTTT";
-    def p as string init writeTemp(fq("a", $seq, strings.repeat("I", len($seq))), ".fastq");
+    def p as string init writeTemp(fq("a", $seq, strings.replicate("I", len($seq))), ".fastq");
     def opts as Options init options();
     $opts.adapters = [ADAPTER_TRUSEQ, ADAPTER_TRUSEQ];
     def rep as Report init analyze($p, $opts);

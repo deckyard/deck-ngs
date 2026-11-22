@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * Streaming read QC over FASTQ, FastQC-lite. One pass gives read and base
@@ -30,6 +30,7 @@ use io;
 use strings;
 use convert;
 use maps;
+use encoding;
 import "./core.j" as core;
 import "./fastq.j" as fastq;
 
@@ -207,7 +208,7 @@ export func analyze(path as string, opts as Options) {
             $lengthHist[$width] = 1;
         }
         if ($cfg.perBase) {
-            def raw as bytes init convert.bytesFromString("utf-8", $rec.qual);
+            def raw as bytes init encoding.encode("utf-8", $rec.qual);
             while (len($sums) < len($raw)) {
                 $sums[] = 0;
                 $counts[] = 0;

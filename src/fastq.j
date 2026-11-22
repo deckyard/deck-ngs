@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * Streaming FASTQ reading, writing and per-record accessors. A `Reader` is a
@@ -25,10 +25,10 @@
  * @since 0.1.0
  */
 use strings;
-use convert;
 use fs;
 use channel;
 use regex;
+use encoding;
 import "./core.j" as core;
 import "./source.j" as source;
 
@@ -197,20 +197,15 @@ export func parse(header as string, seq as string, plus as string, qual as strin
         core.fail("fastq", "quality outside '!'..'~' (ASCII 33..126) in read: " + $header);
     }
     # The quality is ASCII now, so its rune count is its byte count.
-    if (len($seq) != len($qual) or len(convert.bytesFromString("utf-8", $seq)) != len($qual)) {
+    if (len($seq) != len($qual) or len(encoding.encode("utf-8", $seq)) != len($qual)) {
         core.fail("fastq", "sequence and quality differ in length in read: " + $header);
     }
-    def rest as string init strings.substring($header, 1);
+    def rest as string init $header[1..];
     def cut as int init strings.indexOf($rest, " ");
     if ($cut < 0) {
         return Read{id: $rest, desc: "", seq: $seq, qual: $qual};
     }
-    return Read{
-        id: strings.substring($rest, 0, $cut),
-        desc: strings.substring($rest, $cut + 1),
-        seq: $seq,
-        qual: $qual
-    };
+    return Read{id: $rest[..$cut], desc: $rest[$cut + 1..], seq: $seq, qual: $qual};
 }
 
 /**
@@ -227,7 +222,7 @@ export func format(rec as Read) {
     checkSequence($rec);
     checkQuality($rec.qual, $rec.id);
     if (len($rec.seq) != len($rec.qual) or
-        len(convert.bytesFromString("utf-8", $rec.seq)) != len($rec.qual)) {
+        len(encoding.encode("utf-8", $rec.seq)) != len($rec.qual)) {
         core.fail("fastq", "sequence and quality differ in length in read: " + $rec.id);
     }
     return "@" + headerOf($rec) + "\n" + $rec.seq + "\n+\n" + $rec.qual + "\n";
@@ -332,7 +327,7 @@ export func length(rec as Read) {
  * @return {list of int} one Phred score per base
  */
 export func qualities(rec as Read, offset as int) {
-    def raw as bytes init convert.bytesFromString("utf-8", $rec.qual);
+    def raw as bytes init encoding.encode("utf-8", $rec.qual);
     def out as list of int init [];
     for (def i in 0..len($raw)) {
         $out[] = $raw[$i] - $offset;
@@ -354,7 +349,7 @@ export func meanQuality(rec as Read, offset as int) {
     if (len($rec.qual) == 0) {
         return 0.0;
     }
-    def raw as bytes init convert.bytesFromString("utf-8", $rec.qual);
+    def raw as bytes init encoding.encode("utf-8", $rec.qual);
     def total as int init 0;
     for (def i in 0..len($raw)) {
         $total = $total + ($raw[$i] - $offset);
@@ -373,7 +368,7 @@ export func minQuality(rec as Read, offset as int) {
     if (len($rec.qual) == 0) {
         return -1;
     }
-    def raw as bytes init convert.bytesFromString("utf-8", $rec.qual);
+    def raw as bytes init encoding.encode("utf-8", $rec.qual);
     def lowest as int init $raw[0] - $offset;
     for (def i in 0..len($raw)) {
         def q as int init $raw[$i] - $offset;
@@ -423,8 +418,8 @@ export func subseq(rec as Read, start as int, end as int) {
     return Read{
         id: $rec.id,
         desc: $rec.desc,
-        seq: strings.substring($rec.seq, $start, $end),
-        qual: strings.substring($rec.qual, $start, $end)
+        seq: $rec.seq[$start..$end],
+        qual: $rec.qual[$start..$end]
     };
 }
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * Streaming VCF reading and writing.
@@ -18,7 +18,6 @@ use strings;
 use convert;
 use fs;
 use maps;
-use lists;
 use regex;
 import "./core.j" as core;
 import "./source.j" as source;
@@ -243,7 +242,7 @@ func parseRow(line as string) {
     }
     def cols as list of string init [];
     if (len($f) > FIXED_COLUMNS) {
-        $cols = lists.slice($f, FIXED_COLUMNS);
+        $cols = $f[FIXED_COLUMNS..];
     }
     def quality as float init -1.0;
     if ($f[5] != MISSING and len($f[5]) > 0) {
@@ -292,8 +291,8 @@ export func parseInfo(text as string) {
         def key as string init $entry;
         def value as string init "";
         if ($cut >= 0) {
-            $key = strings.substring($entry, 0, $cut);
-            $value = strings.substring($entry, $cut + 1);
+            $key = $entry[..$cut];
+            $value = $entry[$cut + 1..];
             if ($encoded) {
                 $value = percentDecode($value);
             }

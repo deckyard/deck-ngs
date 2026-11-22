@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * Read trimming, filtering and subsampling over FASTQ, fastp-lite.
@@ -33,6 +33,7 @@ use fs;
 use path;
 use maps;
 use regex;
+use encoding;
 import "./core.j" as core;
 import "./source.j" as source;
 import "./fastq.j" as fastq;
@@ -372,7 +373,7 @@ export func qualityKeepLength(qual as string, threshold as int, window as int, o
                 " outside " + convert.toString($offset) + "..126 for offset " +
                 convert.toString($offset) + "; wrong offset?");
     }
-    def raw as bytes init convert.bytesFromString("utf-8", $qual);
+    def raw as bytes init encoding.encode("utf-8", $qual);
     def n as int init len($raw);
     if ($n == 0) {
         return 0;
@@ -719,14 +720,14 @@ func partialAt(seq as string, probe as string, overlap as int) {
     # A match of length k starts at len(seq) - k with the probe's first
     # `overlap` bases, so a native search for that seed visits only the
     # candidates, longest first.
-    def seed as string init strings.substring($probe, 0, $overlap);
+    def seed as string init $probe[..$overlap];
     def from as int init len($seq) - len($probe) + 1;
     if ($from < 0) {
         $from = 0;
     }
     def at as int init strings.indexOf($seq, $seed, $from);
     while ($at >= 0) {
-        if (strings.startsWith($probe, strings.substring($seq, $at, len($seq)))) {
+        if (strings.startsWith($probe, $seq[$at..len($seq)])) {
             return $at;
         }
         $at = strings.indexOf($seq, $seed, $at + 1);

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * Shared primitives: error construction, Go-speed counting, tab-delimited
@@ -223,10 +223,10 @@ export func padNum(n as int, width as int) {
         # Beyond the constant's reach, fall back to building the run. This is
         # not a path any coordinate takes - it exists so an exported function is
         # total rather than raising a substring error from its own internals.
-        return strings.repeat("0", $width - len($s)) + $s;
+        return strings.replicate("0", $width - len($s)) + $s;
     }
     def padded as string init PAD_ZEROS + $s;
-    return strings.substring($padded, len($padded) - $width);
+    return $padded[len($padded) - $width..];
 }
 
 /**

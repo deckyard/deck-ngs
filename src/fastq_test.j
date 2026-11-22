@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 /**
  * White-box tests for the FASTQ reader.
  * Run with: jennifer test fastq_test.j
@@ -178,17 +178,17 @@ func parseQuality(seq as string, qual as string) {
 func testQualityOutsidePrintableAsciiIsRejected() {
     # 33..126 is the whole FASTQ alphabet. "é" is two bytes: it used to pass as
     # one rune and decode to two scores (195-33, 169-33).
-    testing.assertThrowsWith("parseQuality", ["AC", "Ié"], "ngs.fastq");
-    testing.assertThrowsWith("parseQuality", ["AC", "I "], "ngs.fastq");
-    testing.assertThrowsWith("parseQuality", ["AC", "I\t"], "ngs.fastq");
-    testing.assertThrowsWith("parseQuality", ["AC", "I\u007f"], "ngs.fastq");
+    testing.assertThrowsArgs("parseQuality", ["AC", "Ié"], "ngs.fastq");
+    testing.assertThrowsArgs("parseQuality", ["AC", "I "], "ngs.fastq");
+    testing.assertThrowsArgs("parseQuality", ["AC", "I\t"], "ngs.fastq");
+    testing.assertThrowsArgs("parseQuality", ["AC", "I\u007f"], "ngs.fastq");
     # Both ends of the range are accepted.
     testing.assertEqual(qualities(parse("@r", "AC", "+", "!~"), PHRED33), [0, 93]);
 }
 
 func testSequenceAndQualityLengthsCompareInBytes() {
     # "Aé" is 2 runes but 3 bytes against a 2-byte quality.
-    testing.assertThrowsWith("parseQuality", ["Aé", "II"], "ngs.fastq");
+    testing.assertThrowsArgs("parseQuality", ["Aé", "II"], "ngs.fastq");
 }
 
 func formatOf(id as string, desc as string, seq as string, qual as string) {
@@ -197,12 +197,12 @@ func formatOf(id as string, desc as string, seq as string, qual as string) {
 
 func testFormatRejectsFieldsThatBreakTheRecord() {
     # Each of these used to be written and then read back as something else.
-    testing.assertThrowsWith("formatOf", ["a b", "", "A", "I"], "ngs.fastq");
-    testing.assertThrowsWith("formatOf", ["x\nACGT\n+\nIIII\n@y", "", "A", "I"], "ngs.fastq");
-    testing.assertThrowsWith("formatOf", ["a", "note\n@z", "A", "I"], "ngs.fastq");
-    testing.assertThrowsWith("formatOf", ["a", "", "A\tC", "II"], "ngs.fastq");
-    testing.assertThrowsWith("formatOf", ["a", "", "AC", "I"], "ngs.fastq");
-    testing.assertThrowsWith("formatOf", ["a", "", "A", "\n"], "ngs.fastq");
+    testing.assertThrowsArgs("formatOf", ["a b", "", "A", "I"], "ngs.fastq");
+    testing.assertThrowsArgs("formatOf", ["x\nACGT\n+\nIIII\n@y", "", "A", "I"], "ngs.fastq");
+    testing.assertThrowsArgs("formatOf", ["a", "note\n@z", "A", "I"], "ngs.fastq");
+    testing.assertThrowsArgs("formatOf", ["a", "", "A\tC", "II"], "ngs.fastq");
+    testing.assertThrowsArgs("formatOf", ["a", "", "AC", "I"], "ngs.fastq");
+    testing.assertThrowsArgs("formatOf", ["a", "", "A", "\n"], "ngs.fastq");
     # A tab in the description is kept: samtools fastq -T writes tags there.
     testing.assertEqual(formatOf("a", "BC:Z:x\tRX:Z:y", "A", "I"), "@a BC:Z:x\tRX:Z:y\nA\n+\nI\n");
 }

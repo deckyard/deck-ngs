@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 /**
  * White-box tests for the GFF3 / GTF reader.
  * Run with: jennifer test gff_test.j
@@ -172,7 +172,7 @@ func testRepeatedKeysJoinWithComma() {
 func testGtfSemicolonInsideQuotesDoesNotSplit() {
     def m as map of string to string init parseAttributes("gene_id \"g\"; note \"a; b\";");
     testing.assertEqual($m, {"gene_id": "g", "note": "a; b"});
-    testing.assertThrowsWith("attrsOf", ["gene_id \"g; level 2;"], "ngs.gff");
+    testing.assertThrowsArgs("attrsOf", ["gene_id \"g; level 2;"], "ngs.gff");
 }
 
 func attrsOf(text as string) {
@@ -187,13 +187,13 @@ func formatWith(seqid as string, key as string, value as string, style as string
 }
 
 func testFormatRejectsFieldsThatBreakTheRecord() {
-    testing.assertThrowsWith("formatWith", ["chr1\tX", "k", "v", STYLE_GFF3], "ngs.gff");
-    testing.assertThrowsWith("formatWith", ["chr1\n", "k", "v", STYLE_GFF3], "ngs.gff");
-    testing.assertThrowsWith("formatWith", ["chr1", "k=x", "v", STYLE_GFF3], "ngs.gff");
-    testing.assertThrowsWith("formatWith", ["chr1", "k x", "v", STYLE_GTF], "ngs.gff");
+    testing.assertThrowsArgs("formatWith", ["chr1\tX", "k", "v", STYLE_GFF3], "ngs.gff");
+    testing.assertThrowsArgs("formatWith", ["chr1\n", "k", "v", STYLE_GFF3], "ngs.gff");
+    testing.assertThrowsArgs("formatWith", ["chr1", "k=x", "v", STYLE_GFF3], "ngs.gff");
+    testing.assertThrowsArgs("formatWith", ["chr1", "k x", "v", STYLE_GTF], "ngs.gff");
     # GTF has no escape: a quote in a value used to inject a new attribute.
-    testing.assertThrowsWith("formatWith", ["chr1", "note", "x\"; evil \"1", STYLE_GTF], "ngs.gff");
-    testing.assertThrowsWith("formatWith", ["chr1", "note", "x\ty", STYLE_GTF], "ngs.gff");
+    testing.assertThrowsArgs("formatWith", ["chr1", "note", "x\"; evil \"1", STYLE_GTF], "ngs.gff");
+    testing.assertThrowsArgs("formatWith", ["chr1", "note", "x\ty", STYLE_GTF], "ngs.gff");
     # GFF3 escapes those instead.
     testing.assertEqual(
         formatWith("chr1", "note", "x\"\ty", STYLE_GFF3),

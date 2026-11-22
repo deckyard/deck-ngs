@@ -23,7 +23,7 @@ are named `deckyard-ngs-<version>.tar.gz`;
 [installing one by hand](https://deckyard.github.io/deck-ngs/getting-started.html)
 is covered in the manual.
 
-Needs Jennifer 0.26.0 or newer. Streaming gzip and `pipeline` need the `exec`
+Needs Jennifer 0.27.0 or newer. Streaming gzip and `pipeline` need the `exec`
 capability (the default `jennifer` binary, not `jennifer-tiny`) and `gzip` and
 `mkfifo` on `PATH`; everything else runs on both binaries.
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 /**
  * White-box tests for the BED reader.
  * Run with: jennifer test bed_test.j
@@ -113,7 +113,7 @@ func formatNamed(chrom as string, name as string) {
 
 func testFormatRejectsTabsAndLineBreaks() {
     # "a\tb" used to be written as two columns, shifting score and strand.
-    testing.assertThrowsWith("formatNamed", ["chr1", "a\tb"], "ngs.bed");
-    testing.assertThrowsWith("formatNamed", ["chr1", "a\nchr2\t5\t6"], "ngs.bed");
-    testing.assertThrowsWith("formatNamed", ["chr1\r", "a"], "ngs.bed");
+    testing.assertThrowsArgs("formatNamed", ["chr1", "a\tb"], "ngs.bed");
+    testing.assertThrowsArgs("formatNamed", ["chr1", "a\nchr2\t5\t6"], "ngs.bed");
+    testing.assertThrowsArgs("formatNamed", ["chr1\r", "a"], "ngs.bed");
 }

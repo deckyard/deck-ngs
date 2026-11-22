@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * Streaming SAM reading and writing.
@@ -21,7 +21,7 @@
 use strings;
 use convert;
 use fs;
-use lists;
+use encoding;
 import "./core.j" as core;
 import "./source.j" as source;
 import "./intervals.j" as intervals;
@@ -243,7 +243,7 @@ func parseRow(line as string) {
     }
     def tags as list of string init [];
     if (len($f) > 11) {
-        $tags = lists.slice($f, 11);
+        $tags = $f[11..];
     }
     return Record{
         qname: $f[0],
@@ -469,7 +469,7 @@ func cigarSpan(cigar as string, reference as bool) {
     if ($cigar == MISSING or len($cigar) == 0) {
         return 0;
     }
-    def raw as bytes init convert.bytesFromString("utf-8", $cigar);
+    def raw as bytes init encoding.encode("utf-8", $cigar);
     def total as int init 0;
     def n as int init 0;
     def digits as int init 0;
@@ -552,12 +552,12 @@ export func tagValue(rec as Record, tagName as string, fallback as string) {
     def prefix as string init $tagName + ":";
     for (def entry in $rec.tags) {
         if (strings.startsWith($entry, $prefix)) {
-            def rest as string init strings.substring($entry, len($prefix));
+            def rest as string init $entry[len($prefix)..];
             def cut as int init strings.indexOf($rest, ":");
             if ($cut < 0) {
                 return $rest;
             }
-            return strings.substring($rest, $cut + 1);
+            return $rest[$cut + 1..];
         }
     }
     return $fallback;
@@ -625,7 +625,7 @@ export func headerOf(path as string) {
 func headerTag(line as string, prefix as string) {
     for (def part in core.splitTab($line)) {
         if (strings.startsWith($part, $prefix)) {
-            return strings.substring($part, len($prefix));
+            return $part[len($prefix)..];
         }
     }
     return "";

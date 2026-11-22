@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * Streaming BED reading and writing. BED and `intervals.Interval` are both
@@ -288,7 +288,7 @@ func isDecoration(line as string) {
     if (len($line) == 0) {
         return true;
     }
-    def first as string init strings.substring($line, 0, 1);
+    def first as string init $line[..1];
     if ($first == "#") {
         return true;
     }

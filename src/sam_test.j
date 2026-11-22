@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 /**
  * White-box tests for the SAM reader.
  * Run with: jennifer test sam_test.j
@@ -165,22 +165,25 @@ func testCigarSpansAgreeWithParseCigar() {
 }
 
 func testMalformedCigarSpansRaiseNgsSam() {
-    testing.assertThrowsWith("refLength", ["M"], "ngs.sam");
-    testing.assertThrowsWith("refLength", ["10M5"], "ngs.sam");
-    testing.assertThrowsWith("refLength", ["9999999999999999999M"], "ngs.sam");
+    testing.assertThrowsArgs("refLength", ["M"], "ngs.sam");
+    testing.assertThrowsArgs("refLength", ["10M5"], "ngs.sam");
+    testing.assertThrowsArgs("refLength", ["9999999999999999999M"], "ngs.sam");
     # Ten 18-digit lengths, about 1e19, overflow the int64 total.
-    testing.assertThrowsWith("refLength", [strings.repeat("999999999999999999M", 10)], "ngs.sam");
+    testing.assertThrowsArgs(
+        "refLength",
+        [strings.replicate("999999999999999999M", 10)],
+        "ngs.sam");
 }
 
 func testUnknownCigarOpsRaiseNgsSam() {
     # Unknown and lower-case codes were taken as operations, and the span
     # functions skipped them: "40m" had a reference length of 0.
     for (def bad in ["40M2Q", "40m", "10M2i", "5M1\u00e9"]) {
-        testing.assertThrowsWith("refLength", [$bad], "ngs.sam");
-        testing.assertThrowsWith("qryLength", [$bad], "ngs.sam");
-        testing.assertThrowsWith("parseCigar", [$bad], "ngs.sam");
+        testing.assertThrowsArgs("refLength", [$bad], "ngs.sam");
+        testing.assertThrowsArgs("qryLength", [$bad], "ngs.sam");
+        testing.assertThrowsArgs("parseCigar", [$bad], "ngs.sam");
     }
-    testing.assertThrowsWith("intervalOf", ["40m"], "ngs.sam");
+    testing.assertThrowsArgs("intervalOf", ["40m"], "ngs.sam");
     testing.assertEqual(len(parseCigar("1M1I1D1N1S1H1P1=1X")), 9);
 }
 
@@ -205,9 +208,9 @@ func formatWith(qname as string, tag as string) {
 
 func testFormatRejectsTabsAndLineBreaks() {
     # A tab shifted every later column; a newline split the record in two.
-    testing.assertThrowsWith("formatWith", ["r\t1", "NM:i:0"], "ngs.sam");
-    testing.assertThrowsWith("formatWith", ["r1", "NM:i:0\nr2"], "ngs.sam");
-    testing.assertThrowsWith("formatWith", ["r1\r", "NM:i:0"], "ngs.sam");
+    testing.assertThrowsArgs("formatWith", ["r\t1", "NM:i:0"], "ngs.sam");
+    testing.assertThrowsArgs("formatWith", ["r1", "NM:i:0\nr2"], "ngs.sam");
+    testing.assertThrowsArgs("formatWith", ["r1\r", "NM:i:0"], "ngs.sam");
     testing.assertEqual(
         formatWith("r1", "NM:i:0"),
         "r1\t0\tchr1\t100\t60\t4M\t*\t0\t0\tACGT\t*\tNM:i:0");

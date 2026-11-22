@@ -163,8 +163,9 @@ datasets.
 
 ## Dependencies on the interpreter
 
-- `strings.count`, the native scan QC counts with; it is why the floor is
-  `>=0.26.0`.
+- Floor `>=0.27.0`: the UTF-8 codecs of `encoding.encode` / `decode`,
+  `strings.replicate` and `testing.assertThrowsArgs` arrived in 0.27.0.
+- `strings.count` (0.26.0), the native scan QC counts with.
 - `os.run`, `spawn` and `task.waitAll` for pipelines, `fs` line reads and
   `meta.hasCapability`.
 - A `spawn` copies every local in scope; `jennifer`'s planned M30.7

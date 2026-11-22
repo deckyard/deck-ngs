@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 /**
  * White-box tests for the VCF reader.
  * Run with: jennifer test vcf_test.j
@@ -153,8 +153,8 @@ func testInfoValuesArePercentEncodedAndDecoded() {
 }
 
 func testDuplicateInfoKeysRaise() {
-    testing.assertThrowsWith("infoOf", ["DP=1;DP=2"], "ngs.vcf");
-    testing.assertThrowsWith("infoOf", ["DB;DB"], "ngs.vcf");
+    testing.assertThrowsArgs("infoOf", ["DP=1;DP=2"], "ngs.vcf");
+    testing.assertThrowsArgs("infoOf", ["DB;DB"], "ngs.vcf");
 }
 
 func infoOf(text as string) {
@@ -162,10 +162,10 @@ func infoOf(text as string) {
 }
 
 func testInfoKeysThatBreakTheColumnAreRejected() {
-    testing.assertThrowsWith("infoText", ["A;B"], "ngs.vcf");
-    testing.assertThrowsWith("infoText", ["A=B"], "ngs.vcf");
-    testing.assertThrowsWith("infoText", [""], "ngs.vcf");
-    testing.assertThrowsWith("infoText", ["A B"], "ngs.vcf");
+    testing.assertThrowsArgs("infoText", ["A;B"], "ngs.vcf");
+    testing.assertThrowsArgs("infoText", ["A=B"], "ngs.vcf");
+    testing.assertThrowsArgs("infoText", [""], "ngs.vcf");
+    testing.assertThrowsArgs("infoText", ["A B"], "ngs.vcf");
 }
 
 func infoText(key as string) {
@@ -196,8 +196,8 @@ func columnWith(chrom as string, sample as string) {
 }
 
 func testFormatRejectsTabsAndLineBreaks() {
-    testing.assertThrowsWith("columnWith", ["chr\t1", "0/1"], "ngs.vcf");
-    testing.assertThrowsWith("columnWith", ["chr1", "0/1\nchr2"], "ngs.vcf");
+    testing.assertThrowsArgs("columnWith", ["chr\t1", "0/1"], "ngs.vcf");
+    testing.assertThrowsArgs("columnWith", ["chr1", "0/1\nchr2"], "ngs.vcf");
 }
 
 func testOpenRefusesAFifoInsteadOfBlocking() {

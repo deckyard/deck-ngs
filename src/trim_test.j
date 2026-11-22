@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * White-box tests for the trimming, filtering and subsampling module.
@@ -42,23 +42,23 @@ func testClipFixedNoOpWhenZero() {
 
 func testAdapterClipFullMatch() {
     def seq as string init "ACGTACGT" + qc.ADAPTER_TRUSEQ;
-    def rec as fastq.Read init fastq.parse("@r", $seq, "+", strings.repeat("I", len($seq)));
+    def rec as fastq.Read init fastq.parse("@r", $seq, "+", strings.replicate("I", len($seq)));
     def got as fastq.Read init clipAdapters($rec, qc.defaultAdapters(), 6);
     testing.assertEqual($got.seq, "ACGTACGT");
 }
 
 func testAdapterClipPartialAtReadEnd() {
-    def prefix as string init strings.substring(qc.ADAPTER_TRUSEQ, 0, 8);
+    def prefix as string init (qc.ADAPTER_TRUSEQ)[..8];
     def seq as string init "TTTTTTTT" + $prefix;
-    def rec as fastq.Read init fastq.parse("@r", $seq, "+", strings.repeat("I", len($seq)));
+    def rec as fastq.Read init fastq.parse("@r", $seq, "+", strings.replicate("I", len($seq)));
     def got as fastq.Read init clipAdapters($rec, [qc.ADAPTER_TRUSEQ], 6);
     testing.assertEqual($got.seq, "TTTTTTTT");
 }
 
 func testAdapterClipRespectsMinOverlap() {
-    def prefix as string init strings.substring(qc.ADAPTER_TRUSEQ, 0, 3);
+    def prefix as string init (qc.ADAPTER_TRUSEQ)[..3];
     def seq as string init "TTTTTTTT" + $prefix;
-    def rec as fastq.Read init fastq.parse("@r", $seq, "+", strings.repeat("I", len($seq)));
+    def rec as fastq.Read init fastq.parse("@r", $seq, "+", strings.replicate("I", len($seq)));
     testing.assertEqual(clipAdapters($rec, [qc.ADAPTER_TRUSEQ], 6).seq, $seq);
 }
 
@@ -69,7 +69,7 @@ func testAdapterClipLeavesCleanRead() {
 
 func testAdapterClipTakesEarliestOfSeveral() {
     def seq as string init "AAAA" + qc.ADAPTER_NEXTERA + "CCCC" + qc.ADAPTER_TRUSEQ;
-    def rec as fastq.Read init fastq.parse("@r", $seq, "+", strings.repeat("I", len($seq)));
+    def rec as fastq.Read init fastq.parse("@r", $seq, "+", strings.replicate("I", len($seq)));
     testing.assertEqual(clipAdapters($rec, qc.defaultAdapters(), 6).seq, "AAAA");
 }
 
@@ -118,12 +118,12 @@ func testZeroValueOptionsKeepEverything() {
 
 func testRunStreamsAndCounts() {
     def clean as string init "ACGTACGTACGTACGTACGTACGTACGT";
-    def body as string init fq("keep", $clean, strings.repeat("I", len($clean))) +
+    def body as string init fq("keep", $clean, strings.replicate("I", len($clean))) +
         fq("short", "ACGT", "IIII") +
         fq(
         "adapter",
         $clean + qc.ADAPTER_TRUSEQ,
-        strings.repeat("I", len($clean) + len(qc.ADAPTER_TRUSEQ)));
+        strings.replicate("I", len($clean) + len(qc.ADAPTER_TRUSEQ)));
     def inPath as string init writeTemp($body, ".fastq");
     def outPath as string init fs.makeTempFile("", "ngsout", ".fastq");
     def st as Stats init run($inPath, $outPath, options());
@@ -142,7 +142,7 @@ func testRunStreamsAndCounts() {
 func testRunCountsBasesInAndOut() {
     def clean as string init "ACGTACGTACGTACGTACGTACGTACGT";
     def inPath as string init writeTemp(
-        fq("a", $clean, strings.repeat("I", len($clean))),
+        fq("a", $clean, strings.replicate("I", len($clean))),
         ".fastq");
     def outPath as string init fs.makeTempFile("", "ngsout", ".fastq");
     def opts as Options init options();
@@ -157,7 +157,7 @@ func testRunCountsBasesInAndOut() {
 func testRunWritesGzipOutput() {
     def clean as string init "ACGTACGTACGTACGTACGTACGTACGT";
     def inPath as string init writeTemp(
-        fq("a", $clean, strings.repeat("I", len($clean))),
+        fq("a", $clean, strings.replicate("I", len($clean))),
         ".fastq");
     def outPath as string init fs.makeTempFile("", "ngsout", ".fastq.gz");
     fs.remove($outPath);
@@ -234,7 +234,7 @@ func testRefusesToTrimAFileOntoItself() {
     # The output is opened for writing before the input is read, so allowing
     # this would truncate the input and report zero reads.
     def p as string init writeTemp(
-        fq("a", "ACGTACGTACGTACGTACGTACGTACGT", strings.repeat("I", 28)),
+        fq("a", "ACGTACGTACGTACGTACGTACGTACGT", strings.replicate("I", 28)),
         ".fastq");
     def sizeBefore as int init len(fs.readString($p));
     def refused as bool init false;
