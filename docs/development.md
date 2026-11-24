@@ -114,7 +114,7 @@ bypasses the floor check. `JENNIFER_IMAGE` overrides the choice. The book uses
 `jennifer-tiny` under `engines`. This deck does not, since streaming gzip and
 `pipeline` need `exec`.
 
-Publishing the book needs GitHub Pages set to Build and deployment > Source >
+Publishing the book needs GitHub™ Pages set to Build and deployment > Source >
 GitHub Actions in the repository settings, and the `github-pages` environment
 allowed to deploy from tags (a deployment tag rule `[0-9]*.[0-9]*.[0-9]*`).
 

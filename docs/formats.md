@@ -73,7 +73,7 @@ fastq.format($rec);                       # four lines, newline-terminated
 fastq.toFasta($rec);                      # two-line FASTA
 ```
 
-`fastq.PHRED33` (33) is the Sanger / Illumina 1.8+ offset; `fastq.PHRED64` (64)
+`fastq.PHRED33` (33) is the Sanger / Illumina™ 1.8+ offset; `fastq.PHRED64` (64)
 is legacy Illumina 1.3-1.7. `qualities`, `meanQuality` and `minQuality` decode
 one base per interpreter step; for whole-file statistics use [`qc`](qc.md).
 

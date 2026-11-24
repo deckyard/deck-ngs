@@ -96,7 +96,7 @@ FASTQ records, reader and writer ([Formats](formats.md#fastq)). Errors are
 
 | constant | value | notes |
 | --- | --- | --- |
-| `fastq.PHRED33` | `33` | Sanger / Illumina 1.8+ quality offset |
+| `fastq.PHRED33` | `33` | Sanger / Illumina™ 1.8+ quality offset |
 | `fastq.PHRED64` | `64` | legacy Illumina 1.3-1.7 offset |
 
 ### `fastq.Read`
@@ -425,10 +425,10 @@ One-pass read QC ([Read quality control](qc.md)).
 | `qc.Q30` | `30` | threshold for `q30Percent` |
 | `qc.DEFAULT_BATCH` | `2000` | records per counting batch |
 | `qc.DEFAULT_BATCH_BASES` | `4000000` | bases per counting batch |
-| `qc.ADAPTER_TRUSEQ` | `"AGATCGGAAGAGC"` | Illumina TruSeq / NEBNext universal |
-| `qc.ADAPTER_NEXTERA` | `"CTGTCTCTTATACACATCT"` | Nextera / transposase |
+| `qc.ADAPTER_TRUSEQ` | `"AGATCGGAAGAGC"` | Illumina TruSeq™ / NEBNext™ universal |
+| `qc.ADAPTER_NEXTERA` | `"CTGTCTCTTATACACATCT"` | Nextera™ / transposase |
 | `qc.ADAPTER_SMALL_RNA` | `"TGGAATTCTCGG"` | Illumina small-RNA 3' |
-| `qc.ARTEFACT_POLY_G` | `"GGGGGGGGGG"` | poly-G of two-colour chemistry (NovaSeq, NextSeq) |
+| `qc.ARTEFACT_POLY_G` | `"GGGGGGGGGG"` | poly-G of two-colour chemistry (NovaSeq™, NextSeq™) |
 
 ### `qc.Options`
 

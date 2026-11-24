@@ -46,3 +46,13 @@ export.
 ## Licence
 
 LGPL-3.0-only, see [LICENSE](LICENSE). Copyright (C) 2026 mplx &lt;mplx@jennifer-lang.dev&gt;.
+
+## Trademarks
+
+Illumina™, TruSeq™, Nextera™, NovaSeq™ and NextSeq™ are trademarks of
+Illumina, Inc. NEBNext™ is a trademark of New England Biolabs, Inc. GATK™ is
+a trademark of The Broad Institute, Inc. Other product and company names may
+be trademarks of their respective owners. They are used only to identify the
+products this deck works with. This deck is an independent project, not
+affiliated with, sponsored or endorsed by Illumina, Inc., New England
+Biolabs, Inc. or The Broad Institute, Inc.

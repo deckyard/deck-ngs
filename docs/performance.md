@@ -32,7 +32,7 @@ batch of records and then counts:
 - adapters - one scan per probe per batch
 - the quality histogram - one scan per Phred score, stopping once every
   character in the batch is accounted for: about forty scans for typical
-  Illumina data instead of the whole printable-ASCII range
+  Illumina™ data instead of the whole printable-ASCII range
 
 The counts are exact.
 

@@ -30,7 +30,7 @@ Drive these through [`pipeline`](pipelines.md) and parse their text output:
 
 - read alignment (BWA, Bowtie2, minimap2)
 - de-novo assembly (SPAdes)
-- variant calling (GATK)
+- variant calling (GATK™)
 - BAM and CRAM. These also need BGZF (blocked gzip with random access), which
   the `compress` library does not provide; pipe `samtools view -h` output into
   the [SAM reader](formats.md#sam) instead.
@@ -81,3 +81,13 @@ Read [Coordinate systems](coordinates.md) before writing interval code, and
 ## Licence
 
 LGPL-3.0-only.
+
+## Trademarks
+
+Illumina™, TruSeq™, Nextera™, NovaSeq™ and NextSeq™ are trademarks of
+Illumina, Inc. NEBNext™ is a trademark of New England Biolabs, Inc. GATK™ is
+a trademark of The Broad Institute, Inc. Other product and company names may
+be trademarks of their respective owners. They are used only to identify the
+products this deck works with. This deck is an independent project, not
+affiliated with, sponsored or endorsed by Illumina, Inc., New England
+Biolabs, Inc. or The Broad Institute, Inc.

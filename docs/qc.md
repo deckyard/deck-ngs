@@ -77,10 +77,10 @@ Four probes are counted by default:
 
 | constant | sequence | source |
 | --- | --- | --- |
-| `qc.ADAPTER_TRUSEQ` | `AGATCGGAAGAGC` | Illumina TruSeq / NEBNext universal |
-| `qc.ADAPTER_NEXTERA` | `CTGTCTCTTATACACATCT` | Nextera / transposase |
+| `qc.ADAPTER_TRUSEQ` | `AGATCGGAAGAGC` | Illumina™ TruSeq™ / NEBNext™ universal |
+| `qc.ADAPTER_NEXTERA` | `CTGTCTCTTATACACATCT` | Nextera™ / transposase |
 | `qc.ADAPTER_SMALL_RNA` | `TGGAATTCTCGG` | Illumina small-RNA 3' |
-| `qc.ARTEFACT_POLY_G` | `GGGGGGGGGG` | poly-G artefact of two-colour chemistry (NovaSeq, NextSeq) |
+| `qc.ARTEFACT_POLY_G` | `GGGGGGGGGG` | poly-G artefact of two-colour chemistry (NovaSeq™, NextSeq™) |
 
 Counts are occurrences, not reads: a read holding the adapter twice adds two.
 Sequences in a batch are joined with newlines before scanning, so a match never

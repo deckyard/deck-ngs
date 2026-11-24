@@ -24,7 +24,7 @@ SIMD-optimised C that an interpreter is 100 to 1000 times too slow to
 replace. So the deck deliberately stays out of:
 
 - read **alignment** (BWA, Bowtie2, minimap2), de-novo **assembly**
-  (SPAdes) and **variant calling** (GATK): drive the native tools through
+  (SPAdes) and **variant calling** (GATK™): drive the native tools through
   `pipeline`;
 - **BAM and CRAM**: they also need BGZF (blocked gzip with random access),
   which `compress` does not provide, and have little standalone value
