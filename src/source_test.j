@@ -113,9 +113,10 @@ func testPlainSinkRoundTrip() {
     fs.remove($out);
 }
 
-func testDoubleCloseReportsCleanlyAndStillCleansUp() {
-    # A second close must raise the deck's own error rather than a bare fs one,
-    # and a gzip source must still have released its FIFO and child either way.
+func testASecondCloseDoesNothing() {
+    # A second close returns 0 on every interpreter (Jennifer 0.27.0's
+    # `fs.close` threw on it, 0.28.0's does nothing), and a gzip source has
+    # released its FIFO and child at the first.
     def p as string init tempPath(".fastq");
     fs.writeString($p, SAMPLE);
     def gz as string init $p + ".gz";
@@ -131,19 +132,14 @@ func testDoubleCloseReportsCleanlyAndStillCleansUp() {
     testing.assertEqual($drained, 28);
     closeStrict($s);
     testing.assertEqual(fs.exists($fifoDir), false);
+    testing.assertEqual(close($s), 0);
+    closeStrict($s);
 
-    testing.assertThrows("closeTwice", "ngs.source");
+    def plain as Source init open($p);
+    testing.assertEqual(close($plain), 0);
+    testing.assertEqual(close($plain), 0);
     fs.remove($p);
     fs.remove($gz);
-}
-
-func closeTwice() {
-    def p as string init tempPath(".txt");
-    fs.writeString($p, "one\n");
-    def s as Source init open($p);
-    def second as int init close($s) + close($s);
-    fs.remove($p);
-    return $second;
 }
 
 func testMissingFileFails() {
@@ -307,34 +303,12 @@ func testOpenRefusesAFifoInsteadOfLosingBytes() {
     testing.assertEqual(kindWithin("isGzip", $fifo), "ngs.source");
 }
 
-func testClosingAGzipSourceTwiceRaisesNgsSource() {
-    testing.assertThrows("closeGzipTwice", "ngs.source");
-}
-
-func closeGzipTwice() {
-    def dir as string init fixtureDir();
-    defer fs.removeAll($dir);
-    def p as string init path.join($dir, "reads.txt");
-    fs.writeString($p, SAMPLE);
-    def zipped as os.Result init os.run(["gzip", "-f", $p]);
-    testing.assertEqual($zipped.exitCode, 0);
-    def s as Source init open($p + ".gz");
-    while (hasNext($s)) {
-        nextLine($s);
-    }
-    closeStrict($s);
-    return close($s);
-}
-
-func testClosingAGzipSinkTwiceRaisesNgsSource() {
-    testing.assertThrows("closeGzipSinkTwice", "ngs.source");
-}
-
-func closeGzipSinkTwice() {
+func testClosingAGzipSinkTwiceDoesNothing() {
     def dir as string init fixtureDir();
     defer fs.removeAll($dir);
     def k as Sink init createGzip(path.join($dir, "out.txt.gz"));
     writeLine($k, "one");
-    closeSink($k);
-    return closeSink($k);
+    testing.assertEqual(closeSink($k), 0);
+    testing.assertEqual(fs.exists($k.helper), false);
+    testing.assertEqual(closeSink($k), 0);
 }

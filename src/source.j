@@ -239,37 +239,47 @@ export func nextLine(s as Source) {
  * detected. A stream abandoned early kills the decompressor with `SIGPIPE`, a
  * non-zero code to ignore; use `closeStrict` only on a stream read to the end.
  *
+ * A second close does nothing and returns 0.
+ *
  * @param s {Source} the source to close
- * @return {int} the child's exit code, 0 when there is no child
- * @throws {Error} kind "ngs.source" when the handle could not be closed (closed
- *   twice, say); the child and temporary files are released first
+ * @return {int} the child's exit code, 0 when there is no child or the
+ *   source was closed before
+ * @throws {Error} kind "ngs.source" when the decompressor cannot be reaped;
+ *   the temporary files are removed first
  */
 export func close(s as Source) {
-    # Release everything before reporting a failed handle close. Letting the
-    # `fs.close` error propagate straight out would skip the child reap and the
-    # FIFO removal below, leaking both - which is exactly the situation a close
-    # is meant to resolve.
-    def failure as string init "";
+    # The FIFO directory lives until the first close removes it, so a piped
+    # source without it is closed already: its child is released, and
+    # `os.wait` would refuse the stale handle.
+    if ($s.piped and not fs.exists($s.helper)) {
+        return 0;
+    }
+    # The handle is read-only, so closing it loses nothing; the one failure
+    # is a handle closed before, which Jennifer 0.27.0 reports (kind
+    # "runtime") and 0.28.0 ignores. Either way the close goes on.
     try {
         fs.close($s.file);
     } catch (e) {
-        $failure = $e.message;
+        if ($e.kind != "runtime") {
+            throw $e;
+        }
     }
+    def failure as string init "";
     def code as int init 0;
     if ($s.piped) {
-        # A second close finds the child already released; `os.wait` then
-        # raises a bare runtime error, reported below as the deck's own kind.
+        # Release everything before reporting a failed reap: the FIFO
+        # removal below still runs.
         try {
             def r as os.Result init os.wait($s.proc);
             $code = $r.exitCode;
             os.release($s.proc);
         } catch (e) {
-            $failure = $failure + "; " + $e.message;
+            $failure = $e.message;
         }
     }
     discard($s.helper);
     if (len($failure) > 0) {
-        core.fail("source", "closing " + $s.origin + " failed (already closed?): " + $failure);
+        core.fail("source", "closing " + $s.origin + " failed: " + $failure);
     }
     return $code;
 }
@@ -386,12 +396,21 @@ export func writeLine(k as Sink, line as string) {
  *
  * Check the return value: non-zero means the `.gz` output is incomplete.
  *
+ * A second close of a `.gz` sink does nothing and returns 0; one of a plain
+ * sink follows `fs.close` (an error before Jennifer 0.28.0, nothing from it
+ * on).
+ *
  * @param k {Sink} the sink to close
- * @return {int} the child's exit code, 0 when there is no child
+ * @return {int} the child's exit code, 0 when there is no child or a `.gz`
+ *   sink was closed before
  * @throws {Error} kind "ngs.source" when the handle could not be closed; the
  *   child and private directory are released first
  */
 export func closeSink(k as Sink) {
+    # As in `close`: a piped sink without its FIFO directory is closed already.
+    if ($k.piped and not fs.exists($k.helper)) {
+        return 0;
+    }
     # Same ordering as `close`: drain and clean up first, report afterwards.
     def failure as string init "";
     try {

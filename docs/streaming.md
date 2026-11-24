@@ -84,9 +84,9 @@ including when the failure happens inside a caller such as `qc.analyze`.
 
 `source.close` closes the read handle (a still-running decompressor then exits
 on `SIGPIPE`), waits for the child, removes the FIFO directory and returns the
-child's exit code, or `0` when no child was involved. If closing the handle
-itself fails (a second close, say), the child and the temporary files are
-released first and then `ngs.source` is raised.
+child's exit code, or `0` when no child was involved. A second close does
+nothing and returns `0`. If the child cannot be reaped, the temporary files
+are removed first and then `ngs.source` is raised.
 
 A truncated or corrupt `.gz` otherwise looks like an early end of stream.
 `source.closeStrict` raises `ngs.source` when the code is non-zero:

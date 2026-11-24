@@ -80,7 +80,7 @@ An open line sink.
 | `source.openGzipBuffered(path)` | `Source` | decompresses the whole file in memory to a temp file; small inputs only |
 | `source.hasNext(s)` | `bool` | false at end of stream |
 | `source.nextLine(s)` | `string` | next line, terminator stripped; raises at end of stream |
-| `source.close(s)` | `int` | decompressor exit code, 0 without one; raises `ngs.source` on a second close; releases child and temp files even when it raises |
+| `source.close(s)` | `int` | decompressor exit code, 0 without one; a second close does nothing and returns 0; releases child and temp files even when it raises |
 | `source.closeStrict(s)` | - | raises when the decompressor exited non-zero; use after reading to the end |
 | `source.create(path)` | `Sink` | gzip when the name ends in `.gz` |
 | `source.createPlain(path)` | `Sink` | creates or truncates |
