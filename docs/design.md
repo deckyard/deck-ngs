@@ -163,7 +163,7 @@ datasets.
 
 ## Dependencies on the interpreter
 
-- Floor `>=0.27.0`: the UTF-8 codecs of `encoding.encode` / `decode`,
+- Floor `>=0.28.0` (the calls 0.29.0 removes are replaced by their 0.28.0 forms): the UTF-8 codecs of `encoding.encode` / `decode`,
   `strings.replicate` and `testing.assertThrowsArgs` arrived in 0.27.0.
 - `strings.count` (0.26.0), the native scan QC counts with.
 - `os.run`, `spawn` and `task.waitAll` for pipelines, `fs` line reads and

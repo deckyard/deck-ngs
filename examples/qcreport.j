@@ -1,7 +1,7 @@
 #!/usr/bin/env -S jennifer run
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.27.0
+# pragma-jennifer-version: >=0.28.0
 #
 # One-pass QC report over a FASTQ file, gzipped or not.
 #
@@ -10,6 +10,7 @@
 # The relative imports run the example from a checkout; a project that
 # installed the deck writes `import "@deckyard/ngs/qc.j" as qc;`.
 use io;
+use math;
 use os;
 use convert;
 import "../src/qc.j" as qc;
@@ -45,7 +46,7 @@ if (len($means) > 0) {
 }
 
 func bar(value as float) {
-    def width as int init convert.toInt($value / 2.0);
+    def width as int init math.trunc($value / 2.0);
     def out as string init "";
     for (def i in 0..$width) {
         $out = $out + "#";

@@ -25,7 +25,7 @@ tar -xzf deckyard-ngs-0.3.0.tar.gz -C vendor/deckyard/ngs \
 The vendor root is resolved as `--vendor`, then `JENNIFER_VENDOR`, then the
 nearest `vendor/` directory above the program.
 
-Every file in `src/` carries a `# pragma-jennifer-version: >=0.27.0` header, so
+Every file in `src/` carries a `# pragma-jennifer-version: >=0.28.0` header, so
 an older interpreter refuses to load the deck. `deck.yaml` declares the same
 floor under `engines`.
 

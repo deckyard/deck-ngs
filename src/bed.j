@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.27.0
+# pragma-jennifer-version: >=0.28.0
 
 /**
  * Streaming BED reading and writing. BED and `intervals.Interval` are both
@@ -28,6 +28,7 @@
  * @module bed
  * @since 0.1.0
  */
+use math;
 use strings;
 use convert;
 use fs;
@@ -317,7 +318,7 @@ func formatScore(score as float) {
     if ($score >= WHOLE_LIMIT or $score <= -WHOLE_LIMIT) {
         return convert.toString($score);
     }
-    def rounded as int init convert.toInt($score);
+    def rounded as int init math.trunc($score);
     if ($rounded == $score) {
         return convert.toString($rounded);
     }

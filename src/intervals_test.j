@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.27.0
+# pragma-jennifer-version: >=0.28.0
 
 /**
  * White-box tests for the interval engine.
@@ -222,7 +222,7 @@ func testToBed3() {
 }
 
 func nowMillis() {
-    return time.unixMillis(time.now());
+    return time.unixMilliseconds(time.now());
 }
 
 # Random sets on two chromosomes with long, short and zero-length intervals;
